@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dashboard Launcher</title>
+<style>
+  body {
+    font-family: -apple-system, Segoe UI, sans-serif;
+    background: #14161a;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 40px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 24px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card {
+    background: #1e2127;
+    border: 1px solid #2c303a;
+    border-radius: 10px;
+    padding: 20px;
+    width: 220px;
+  }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 13px; color: #9aa0aa; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
+  .dot.up { background: #3ecf6e; }
+  .dot.down { background: #555; }
+  .dot.partial { background: #e0a53f; }
+  .row { display: flex; gap: 8px; }
+  button, a.open-link {
+    flex: 1;
+    padding: 8px 0;
+    border-radius: 6px;
+    border: none;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: center;
+    text-decoration: none;
+  }
+  .btn-start { background: #2c5f3f; color: #d5ffe4; }
+  .btn-stop { background: #5f2c2c; color: #ffd5d5; }
+  .btn-open { background: #2c3a5f; color: #d5e0ff; }
+  button:disabled { opacity: 0.35; cursor: default; }
+  .open-link.disabled { opacity: 0.35; pointer-events: none; }
+</style>
+</head>
+<body>
+<h1>Dashboard Launcher</h1>
+<div class="cards" id="cards"></div>
+
+<script>
+async function init() {
+  const res = await fetch("/api/apps");
+  const apps = await res.json();
+  const cardsEl = document.getElementById("cards");
+  cardsEl.innerHTML = apps.map(a => `
+    <div class="card" id="card-${a.id}">
+      <h2>${a.label}</h2>
+      <div class="status"><span class="dot" id="dot-${a.id}"></span><span id="text-${a.id}">checking…</span></div>
+      <div class="row">
+        <button class="btn-start" id="start-${a.id}" onclick="startApp('${a.id}')">Start</button>
+        <button class="btn-stop" id="stop-${a.id}" onclick="stopApp('${a.id}')">Stop</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <a class="open-link btn-open" id="open-${a.id}" target="_blank">Open</a>
+      </div>
+    </div>
+  `).join("");
+  refresh();
+  setInterval(refresh, 3000);
+}
+
+async function refresh() {
+  const res = await fetch("/api/status");
+  const data = await res.json();
+  for (const id in data) {
+    const { state, open_port } = data[id];
+    document.getElementById(`dot-${id}`).className = `dot ${state}`;
+    document.getElementById(`text-${id}`).textContent =
+      state === "up" ? "running" : state === "partial" ? "starting…" : "stopped";
+    document.getElementById(`start-${id}`).disabled = state === "up";
+    document.getElementById(`stop-${id}`).disabled = state === "down";
+    const openLink = document.getElementById(`open-${id}`);
+    openLink.href = `http://localhost:${open_port}`;
+    openLink.classList.toggle("disabled", state !== "up");
+  }
+}
+
+async function startApp(id) {
+  document.getElementById(`start-${id}`).disabled = true;
+  const res = await fetch(`/api/start/${id}`, { method: "POST" });
+  const data = await res.json();
+  if (!data.ok) {
+    alert(`Failed to start:\n${data.errors.join("\n")}`);
+  }
+  setTimeout(refresh, 500);
+}
+
+async function stopApp(id) {
+  document.getElementById(`stop-${id}`).disabled = true;
+  await fetch(`/api/stop/${id}`, { method: "POST" });
+  setTimeout(refresh, 500);
+}
+
+init();
+</script>
+</body>
+</html>

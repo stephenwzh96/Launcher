@@ -1,0 +1,41 @@
+# Each entry is one dashboard card. Paths are relative to the Marco/ folder
+# (the parent of this launcher/ directory). cmd tokens containing a slash are
+# resolved the same way; bare tokens (like "npm.cmd") are looked up on PATH.
+#
+# health: "tcp" (default) just checks the port accepts a connection.
+#         "http" additionally requires a 2xx/3xx response on health_path --
+#         use this for anything that opens its port before it's actually ready.
+
+- id: fomc
+  label: FOMC
+  open_port: 8502
+  processes:
+    - cwd: FOMC
+      cmd: ["FOMC/.venv/Scripts/streamlit.exe", "run", "app.py",
+            "--server.port", "8502", "--server.headless", "true"]
+      port: 8502
+      log: fomc.log
+
+- id: aus
+  label: Australia Rates
+  open_port: 8501
+  processes:
+    - cwd: Australia-Rates
+      cmd: ["Australia-Rates/.venv/Scripts/streamlit.exe", "run", "app.py",
+            "--server.port", "8501", "--server.headless", "true"]
+      port: 8501
+      log: aus.log
+
+- id: cb
+  label: CB Pricer
+  open_port: 5173
+  processes:
+    - cwd: CB Pricer/backend
+      cmd: ["CB Pricer/backend/.venv/Scripts/python.exe", "-m", "uvicorn",
+            "app.main:app", "--port", "8000"]
+      port: 8000
+      log: cb_backend.log
+    - cwd: CB Pricer
+      cmd: ["npm.cmd", "run", "dev", "--prefix", "frontend"]
+      port: 5173
+      log: cb_frontend.log
