@@ -1,4 +1,4 @@
-"""Loads apps.yaml into typed config objects."""
+"""Loads apps.yaml and tasks.yaml into typed config objects."""
 from pathlib import Path
 from typing import Literal
 
@@ -37,17 +37,41 @@ class AppConfig(BaseModel):
     processes: list[ProcessConfig]
 
 
+class TaskConfig(BaseModel):
+    """A one-shot Start of Day job from tasks.yaml."""
+    id: str
+    label: str
+    description: str = ""
+    cwd: str
+    cmd: list[str]
+    expected_minutes: int | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+
+    def resolved_cwd(self) -> Path:
+        return (MARCO_DIR / self.cwd).resolve()
+
+    def resolved_cmd(self) -> list[str]:
+        return [_resolve(token) for token in self.cmd]
+
+
 def load_apps(path: Path) -> list[AppConfig]:
     raw = yaml.safe_load(path.read_text())
     return [AppConfig(**item) for item in raw]
 
 
-def check_paths(apps: list[AppConfig]) -> list[str]:
+def load_tasks(path: Path) -> list[TaskConfig]:
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text()) or []
+    return [TaskConfig(**item) for item in raw]
+
+
+def check_paths(apps: list[AppConfig], tasks: list[TaskConfig] = ()) -> list[str]:
     """Non-fatal sanity check: flags cwds/executables that don't exist yet
     (e.g. a venv deleted or a folder renamed by an update to that app)."""
     warnings = []
-    for a in apps:
-        for p in a.processes:
+    for a in [*apps, *tasks]:
+        for p in getattr(a, "processes", [a]):  # a task is its own single process
             cwd = p.resolved_cwd()
             if not cwd.exists():
                 warnings.append(f"[{a.id}] cwd not found: {cwd}")

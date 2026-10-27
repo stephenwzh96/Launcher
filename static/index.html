@@ -42,10 +42,69 @@
   .btn-open { background: #2c3a5f; color: #d5e0ff; }
   button:disabled { opacity: 0.35; cursor: default; }
   .open-link.disabled { opacity: 0.35; pointer-events: none; }
+
+  /* Start of Day */
+  .section-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px; }
+  .section-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+  .section-head .meta { font-size: 13px; color: #9aa0aa; }
+  .section-head .spacer { flex: 1; }
+  .section-head button { flex: none; padding: 7px 16px; }
+  .sod { margin-bottom: 36px; max-width: 920px; }
+  .tasks { display: flex; flex-direction: column; gap: 10px; }
+  .task {
+    background: #1e2127;
+    border: 1px solid #2c303a;
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .task.done { border-color: #2c5f3f; }
+  .task.failed, .task.stopped, .task.unknown { border-color: #6b3a2c; }
+  .task-row { display: flex; align-items: center; gap: 12px; }
+  .task-num {
+    width: 22px; height: 22px; border-radius: 50%; flex: none;
+    display: grid; place-items: center; font-size: 12px; font-weight: 600;
+    background: #2c303a; color: #9aa0aa;
+  }
+  .task.done .task-num { background: #2c5f3f; color: #d5ffe4; }
+  .task.running .task-num { background: #2c3a5f; color: #d5e0ff; }
+  .task.failed .task-num, .task.stopped .task-num, .task.unknown .task-num { background: #5f2c2c; color: #ffd5d5; }
+  .task-main { flex: 1; min-width: 0; }
+  .task-title { font-size: 14px; font-weight: 600; }
+  .task-desc { font-size: 12px; color: #9aa0aa; margin-top: 2px; }
+  .task-state { font-size: 13px; color: #c8ccd4; text-align: right; white-space: nowrap; }
+  .task-buttons { display: flex; gap: 6px; flex: none; }
+  .task-buttons button { flex: none; width: 64px; }
+  .btn-log { background: #2c303a; color: #c8ccd4; }
+  .bar { height: 4px; background: #2c303a; border-radius: 2px; margin: 10px 0 0 34px; overflow: hidden; }
+  .bar > div { height: 100%; background: #5b7fd6; transition: width .4s; }
+  .task.done .bar > div { background: #3ecf6e; }
+  .task.failed .bar > div, .task.stopped .bar > div { background: #d65b5b; }
+  .last-line {
+    font: 11px ui-monospace, Consolas, monospace; color: #7d838e; margin: 6px 0 0 34px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  pre.log {
+    font: 11px/1.45 ui-monospace, Consolas, monospace; color: #c8ccd4; background: #14161a;
+    border: 1px solid #2c303a; border-radius: 6px; padding: 10px; margin: 10px 0 0 34px;
+    max-height: 320px; overflow: auto; white-space: pre-wrap;
+  }
+  .empty { font-size: 13px; color: #9aa0aa; }
 </style>
 </head>
 <body>
 <h1>Dashboard Launcher</h1>
+
+<section class="sod">
+  <div class="section-head">
+    <h2>Start of Day</h2>
+    <span class="meta" id="sod-summary"></span>
+    <span class="spacer"></span>
+    <button class="btn-start" id="sod-run-all" onclick="runAll()">Run all</button>
+  </div>
+  <div class="tasks" id="tasks"></div>
+</section>
+
+<div class="section-head"><h2>Dashboards</h2></div>
 <div class="cards" id="cards"></div>
 
 <script>
@@ -68,6 +127,144 @@ async function init() {
   `).join("");
   refresh();
   setInterval(refresh, 3000);
+  refreshTasks();
+}
+
+// ---------- Start of Day tasks (tasks.yaml) ----------
+const openLogs = new Set();
+let taskTimer = null;
+
+const hhmm = iso => iso ? iso.slice(11, 16) : "";
+const minutes = (a, b) => Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000));
+const isToday = iso => iso && iso.slice(0, 10) === new Date().toLocaleDateString("en-CA");
+
+function stateText(t) {
+  const r = t.run;
+  if (t.queued) return "Queued";
+  if (!r) return "Not run yet";
+  const step = r.step ? `${r.step.k}/${r.step.n} ${r.step.title}` : "";
+  const when = isToday(r.started) ? hhmm(r.started) : `${r.started.slice(0, 10)} ${hhmm(r.started)}`;
+  if (r.state === "running") {
+    const of = t.expected_minutes ? ` of ~${t.expected_minutes}` : "";
+    return `Running ${step} · ${minutes(r.started, new Date())} min${of}`;
+  }
+  const took = r.finished ? ` · ${minutes(r.started, r.finished)} min` : "";
+  if (r.state === "done") return `${isToday(r.started) ? "Done today" : "Last done"} ${when}${took}`;
+  if (r.state === "failed") return `Failed at ${step || "start"} · ${when}`;
+  if (r.state === "stopped") return `Stopped at ${step || "start"} · ${when}`;
+  return `Result unknown (launcher restarted) · ${when}`;
+}
+
+function cardClass(t) {
+  const r = t.run;
+  if (t.queued) return "queued";
+  if (!r) return "";
+  if (r.state === "done") return t.done_today ? "done" : "";  // yesterday's success: due again today
+  return r.state;
+}
+
+function barWidth(t) {
+  const r = t.run;
+  if (!r || t.queued) return 0;
+  if (r.state === "done") return t.done_today ? 100 : 0;
+  if (!r.step) return 2;
+  const k = r.state === "running" ? r.step.k - 0.5 : r.step.k;  // a running step is half done
+  return Math.round((100 * k) / r.step.n);
+}
+
+function renderTask(t, i) {
+  let el = document.getElementById(`task-${t.id}`);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = `task-${t.id}`;
+    el.innerHTML = `
+      <div class="task-row">
+        <span class="task-num">${i + 1}</span>
+        <div class="task-main"><div class="task-title"></div><div class="task-desc"></div></div>
+        <div class="task-state"></div>
+        <div class="task-buttons">
+          <button class="btn-start" onclick="startTask('${t.id}')">Start</button>
+          <button class="btn-stop" onclick="stopTask('${t.id}')">Stop</button>
+          <button class="btn-log" onclick="toggleLog('${t.id}')">Log</button>
+        </div>
+      </div>
+      <div class="bar"><div></div></div>
+      <div class="last-line"></div>
+      <pre class="log" hidden></pre>`;
+    document.getElementById("tasks").appendChild(el);
+  }
+  const running = t.run && t.run.state === "running";
+  el.className = `task ${cardClass(t)}`;
+  el.querySelector(".task-title").textContent = t.label;
+  el.querySelector(".task-desc").textContent = t.description;
+  el.querySelector(".task-state").textContent = stateText(t);
+  el.querySelector(".task-num").textContent = t.done_today ? "✓" : String(i + 1);
+  el.querySelector(".bar > div").style.width = `${barWidth(t)}%`;
+  el.querySelector(".last-line").textContent = running || (t.run && t.run.state !== "done") ? t.run.last_line : "";
+  el.querySelector(".btn-start").disabled = running || t.queued;
+  el.querySelector(".btn-start").textContent = t.done_today ? "Rerun" : "Start";
+  el.querySelector(".btn-stop").disabled = !running;
+  el.querySelector(".btn-log").disabled = !t.run;
+}
+
+async function refreshTasks() {
+  clearTimeout(taskTimer);
+  let data;
+  try {
+    data = await (await fetch("/api/tasks")).json();
+  } catch {
+    taskTimer = setTimeout(refreshTasks, 5000);
+    return;
+  }
+  const tasks = data.tasks;
+  if (!tasks.length) {
+    document.getElementById("tasks").innerHTML = '<div class="empty">No tasks: add them to tasks.yaml.</div>';
+  }
+  tasks.forEach(renderTask);
+  const done = tasks.filter(t => t.done_today).length;
+  const busy = data.running_all || tasks.some(t => t.run && t.run.state === "running");
+  const today = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+  document.getElementById("sod-summary").textContent = `${today} · ${done} of ${tasks.length} done today`;
+  const all = document.getElementById("sod-run-all");
+  all.disabled = busy || done === tasks.length;
+  all.textContent = data.running_all ? "Running…" : "Run all";
+  for (const id of openLogs) await loadLog(id);
+  taskTimer = setTimeout(refreshTasks, busy ? 2000 : 5000);
+}
+
+async function loadLog(id) {
+  const pre = document.querySelector(`#task-${id} pre.log`);
+  const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+  pre.textContent = await (await fetch(`/api/tasks/${id}/log`)).text() || "(empty log)";
+  if (atEnd) pre.scrollTop = pre.scrollHeight;  // follow the log unless the user scrolled up
+}
+
+async function toggleLog(id) {
+  const pre = document.querySelector(`#task-${id} pre.log`);
+  pre.hidden = !pre.hidden;
+  if (pre.hidden) openLogs.delete(id);
+  else { openLogs.add(id); await loadLog(id); pre.scrollTop = pre.scrollHeight; }
+}
+
+async function startTask(id) {
+  const t = document.querySelector(`#task-${id} .btn-start`);
+  if (t.textContent === "Rerun" && !confirm("This task already ran successfully today. Run it again?")) return;
+  t.disabled = true;
+  const data = await (await fetch(`/api/tasks/${id}/start`, { method: "POST" })).json();
+  if (!data.ok) alert(`Failed to start:\n${data.errors.join("\n")}`);
+  refreshTasks();
+}
+
+async function stopTask(id) {
+  if (!confirm("Stop this task? Steps already finished are kept; the current step is cut short.")) return;
+  await fetch(`/api/tasks/${id}/stop`, { method: "POST" });
+  refreshTasks();
+}
+
+async function runAll() {
+  document.getElementById("sod-run-all").disabled = true;
+  await fetch("/api/tasks/run-all", { method: "POST" });
+  refreshTasks();
 }
 
 async function refresh() {

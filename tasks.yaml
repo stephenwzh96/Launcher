@@ -1,0 +1,14 @@
+# Start of Day tasks: one-shot jobs started by hand from the "Start of Day" panel. "Run all" runs them top to
+# bottom and stops at the first failure, so put a task after the ones it depends on.
+#
+# Paths work as in apps.yaml: relative to the Marco/ folder; cmd tokens containing a slash are resolved the same way.
+# Progress: the task prints lines containing "== k/n Title" (any prefix, such as a log timestamp, is fine) before
+# each of its n steps. Its exit code decides Done (0) or Failed.
+
+- id: aijpmt1a-refresh
+  label: AIJPMT1A data refresh
+  description: Norgate and free-source data, data QA, panels, monitoring run and dashboard export.
+    Start after about 10:00 Sydney, once Norgate has the US close.
+  cwd: ../Trend/AIJPMT1A_build
+  cmd: ["../Trend/AIJPMT1A_build/.venv/Scripts/python.exe", "../Trend/AIJPMT1A_build/tools/daily_cycle.py"]
+  expected_minutes: 45
