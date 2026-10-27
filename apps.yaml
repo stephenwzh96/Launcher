@@ -39,3 +39,13 @@
       cmd: ["npm.cmd", "run", "dev", "--prefix", "frontend"]
       port: 5173
       log: cb_frontend.log
+
+- id: mtfa
+  label: MTFA Trend Following
+  open_port: 5180
+  processes:
+    - cwd: ../Trend/AIJPMT1A_build/dashboard
+      cmd: ["npm.cmd", "run", "dev", "--prefix", "../Trend/AIJPMT1A_build/dashboard",
+            "--", "--port", "5180", "--strictPort"]
+      port: 5180
+      log: mtfa_dashboard.log
