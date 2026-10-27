@@ -24,6 +24,14 @@ for warning in check_paths(list(APPS.values()), TASKS):
 app = FastAPI()
 
 
+@app.middleware("http")
+async def no_cache(request, call_next):
+    """Always revalidate, so the browser never shows a stale page after the launcher is updated."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 def _get_app(app_id: str):
     if app_id not in APPS:
         raise HTTPException(status_code=404, detail=f"unknown app '{app_id}'")
