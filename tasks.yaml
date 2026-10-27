@@ -6,8 +6,8 @@
 # each of its n steps. Its exit code decides Done (0) or Failed.
 
 - id: aijpmt1a-refresh
-  label: AIJPMT1A data refresh
-  description: Norgate and free-source data, data QA, panels, monitoring run and dashboard export.
+  label: MTFA data refresh
+  description: MTFA (AIJPMT1A replica) - Norgate and free-source data, data QA, panels, monitoring run and dashboard export.
     Start after about 10:00 Sydney, once Norgate has the US close.
   cwd: ../Trend/AIJPMT1A_build
   cmd: ["../Trend/AIJPMT1A_build/.venv/Scripts/python.exe", "../Trend/AIJPMT1A_build/tools/daily_cycle.py"]
