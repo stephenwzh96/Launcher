@@ -7,8 +7,8 @@
 
 - id: aijpmt1a-refresh
   label: MTFA data refresh
-  description: MTFA (AIJPMT1A replica) - Norgate and free-source data, data QA, panels, monitoring run and dashboard export.
+  description: Norgate and free-source data, data QA, panels, then the monitoring runs and dashboard exports of MTFA and its liquid-futures clones MTFB and MTFC.
     Start after about 10:00 Sydney, once Norgate has the US close.
   cwd: ../Trend/AIJPMT1A_build
   cmd: ["../Trend/AIJPMT1A_build/.venv/Scripts/python.exe", "../Trend/AIJPMT1A_build/tools/daily_cycle.py"]
-  expected_minutes: 45
+  expected_minutes: 47
