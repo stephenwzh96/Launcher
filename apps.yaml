@@ -7,7 +7,7 @@
 #         use this for anything that opens its port before it's actually ready.
 
 - id: fomc
-  label: FOMC
+  label: United States Rates
   open_port: 8502
   processes:
     - cwd: FOMC
@@ -39,6 +39,16 @@
       cmd: ["npm.cmd", "run", "dev", "--prefix", "frontend"]
       port: 5173
       log: cb_frontend.log
+
+- id: curve
+  label: Curve
+  open_port: 8010
+  processes:
+    - cwd: Curve/backend
+      cmd: ["Curve/backend/.venv/Scripts/python.exe", "-m", "uvicorn",
+            "app.main:app", "--port", "8010"]
+      port: 8010
+      log: curve.log
 
 - id: mtfa
   label: MTFA Trend Following
