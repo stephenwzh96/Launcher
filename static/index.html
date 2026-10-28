@@ -71,6 +71,8 @@
   .task-main { flex: 1; min-width: 0; }
   .task-title { font-size: 14px; font-weight: 600; }
   .task-desc { font-size: 12px; color: #9aa0aa; margin-top: 2px; }
+  .task-preview { font-size: 12px; color: #e3c46b; margin-top: 4px; }
+  .task-preview.fail { color: #d68a6b; }
   .task-state { font-size: 13px; color: #c8ccd4; text-align: right; white-space: nowrap; }
   .task-buttons { display: flex; gap: 6px; flex: none; }
   .task-buttons button { flex: none; width: 64px; }
@@ -180,7 +182,7 @@ function renderTask(t, i) {
     el.innerHTML = `
       <div class="task-row">
         <span class="task-num">${i + 1}</span>
-        <div class="task-main"><div class="task-title"></div><div class="task-desc"></div></div>
+        <div class="task-main"><div class="task-title"></div><div class="task-desc"></div><div class="task-preview" hidden></div></div>
         <div class="task-state"></div>
         <div class="task-buttons">
           <button class="btn-start" onclick="startTask('${t.id}')">Start</button>
@@ -192,6 +194,7 @@ function renderTask(t, i) {
       <div class="last-line"></div>
       <pre class="log" hidden></pre>`;
     document.getElementById("tasks").appendChild(el);
+    if (t.has_preview) loadPreview(t.id);
   }
   const running = t.run && t.run.state === "running";
   el.className = `task ${cardClass(t)}`;
@@ -207,6 +210,26 @@ function renderTask(t, i) {
   el.querySelector(".btn-log").disabled = !t.run;
 }
 
+// A task's preview_cmd says what today's run will do (e.g. which downloads); checked when the page opens and
+// again after a run ends, since the answer can change once the run has fetched what was due.
+async function loadPreview(id, fresh = false) {
+  const box = document.querySelector(`#task-${id} .task-preview`);
+  box.hidden = false;
+  box.classList.remove("fail");
+  box.textContent = "Checking today's plan…";
+  try {
+    const p = await (await fetch(`/api/tasks/${id}/preview${fresh ? "?fresh=true" : ""}`)).json();
+    box.textContent = p.text;
+    box.classList.toggle("fail", !p.ok);
+    box.hidden = !p.text;
+  } catch {
+    box.textContent = "Could not check today's plan.";
+    box.classList.add("fail");
+  }
+}
+
+const lastState = {};
+
 async function refreshTasks() {
   clearTimeout(taskTimer);
   let data;
@@ -221,6 +244,11 @@ async function refreshTasks() {
     document.getElementById("tasks").innerHTML = '<div class="empty">No tasks: add them to tasks.yaml.</div>';
   }
   tasks.forEach(renderTask);
+  for (const t of tasks) {  // a run just ended: what is due has changed
+    const state = t.run ? t.run.state : "none";
+    if (t.has_preview && lastState[t.id] === "running" && state !== "running") loadPreview(t.id, true);
+    lastState[t.id] = state;
+  }
   const done = tasks.filter(t => t.done_today).length;
   const busy = data.running_all || tasks.some(t => t.run && t.run.state === "running");
   const today = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });

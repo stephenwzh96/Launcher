@@ -45,6 +45,8 @@ class TaskConfig(BaseModel):
     cwd: str
     cmd: list[str]
     expected_minutes: int | None = None
+    # optional: a quick command (same cwd) whose output line says what today's run will do; shown before Start
+    preview_cmd: list[str] | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
     def resolved_cwd(self) -> Path:
@@ -52,6 +54,9 @@ class TaskConfig(BaseModel):
 
     def resolved_cmd(self) -> list[str]:
         return [_resolve(token) for token in self.cmd]
+
+    def resolved_preview_cmd(self) -> list[str] | None:
+        return [_resolve(token) for token in self.preview_cmd] if self.preview_cmd else None
 
 
 def load_apps(path: Path) -> list[AppConfig]:

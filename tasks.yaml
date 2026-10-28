@@ -4,6 +4,8 @@
 # Paths work as in apps.yaml: relative to the Marco/ folder; cmd tokens containing a slash are resolved the same way.
 # Progress: the task prints lines containing "== k/n Title" (any prefix, such as a log timestamp, is fine) before
 # each of its n steps. Its exit code decides Done (0) or Failed.
+# preview_cmd (optional): a quick command whose last output line says what today's run will do; the panel shows it
+# under the task before Start.
 
 - id: aijpmt1a-refresh
   label: MTFA data refresh
@@ -11,4 +13,5 @@
     Start after about 10:00 Sydney, once Norgate has the US close.
   cwd: ../Trend/AIJPMT1A_build
   cmd: ["../Trend/AIJPMT1A_build/.venv/Scripts/python.exe", "../Trend/AIJPMT1A_build/tools/daily_cycle.py"]
+  preview_cmd: ["../Trend/AIJPMT1A_build/.venv/Scripts/python.exe", "../Trend/AIJPMT1A_build/tools/daily_cycle.py", "--plan"]
   expected_minutes: 47

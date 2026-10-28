@@ -51,6 +51,7 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   cwd: MyProject             # relative to Marco/, like apps.yaml
   cmd: ["MyProject/.venv/Scripts/python.exe", "MyProject/tools/my_task.py"]
   expected_minutes: 5       # optional, shown while it runs
+  preview_cmd: ["MyProject/.venv/Scripts/python.exe", "plan.py"]  # optional: its last output line (what today's run will do) is shown under the task
   env: {}                   # optional extra environment variables
 ```
 

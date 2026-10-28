@@ -1,5 +1,7 @@
 """Local launcher: start/stop/status for the dashboards listed in apps.yaml, and the Start of Day tasks in
 tasks.yaml."""
+import subprocess
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -93,6 +95,36 @@ def start_task(task_id: str):
 def stop_task(task_id: str):
     RUNNER.stop(_get_task(task_id))
     return {"ok": True}
+
+
+PREVIEW_TTL_S, PREVIEW_TIMEOUT_S = 600, 90
+_previews: dict[str, tuple[float, dict]] = {}  # task id -> (time, answer); a preview is re-run after 10 minutes
+
+
+@app.get("/api/tasks/{task_id}/preview")
+def task_preview(task_id: str, fresh: bool = False):
+    """What today's run of a task will do: the last output line of its `preview_cmd` (tasks.yaml)."""
+    task = RUNNER.tasks[_get_task(task_id)]
+    cmd = task.resolved_preview_cmd()
+    if not cmd:
+        return {"ok": True, "text": ""}
+    hit = _previews.get(task_id)
+    if hit and not fresh and time.time() - hit[0] < PREVIEW_TTL_S:
+        return hit[1]
+    try:
+        done = subprocess.run(
+            cmd, cwd=task.resolved_cwd(), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=PREVIEW_TIMEOUT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        lines = [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
+        out = (
+            {"ok": True, "text": lines[-1]} if done.returncode == 0 and lines
+            else {"ok": False, "text": f"Could not check today's plan (exit {done.returncode})."}
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        out = {"ok": False, "text": f"Could not check today's plan: {type(e).__name__}."}
+    _previews[task_id] = (time.time(), out)
+    return out
 
 
 @app.get("/api/tasks/{task_id}/log", response_class=PlainTextResponse)
