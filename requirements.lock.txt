@@ -1,0 +1,21 @@
+# Exact library versions from the desktop venv, 2026-10-28 (Python 3.12.10).
+# Install: uv venv --python 3.12.10 .venv && uv pip sync requirements.lock.txt  (run in this folder)
+annotated-types==0.8.0
+anyio==4.14.2
+click==8.4.2
+colorama==0.4.6
+fastapi==0.115.6
+h11==0.16.0
+httptools==0.8.0
+idna==3.18
+pip==25.0.1
+pydantic==2.13.4
+pydantic-core==2.46.4
+python-dotenv==1.2.2
+pyyaml==6.0.2
+starlette==0.41.3
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+uvicorn==0.34.0
+watchfiles==1.2.0
+websockets==17.0.1
