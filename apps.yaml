@@ -59,3 +59,12 @@
             "--", "--port", "5180", "--strictPort"]
       port: 5180
       log: mtfa_dashboard.log
+
+- id: mtfa-execution
+  label: MTFA Execution
+  open_port: 5181
+  processes:
+    - cwd: ../IBKR/dashboard
+      cmd: ["npm.cmd", "run", "dev", "--prefix", "../IBKR/dashboard"]
+      port: 5181
+      log: mtfa_execution.log
