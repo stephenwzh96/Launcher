@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dashboard Launcher</title>
 <style>
   body {
@@ -91,6 +92,32 @@
     max-height: 320px; overflow: auto; white-space: pre-wrap;
   }
   .empty { font-size: 13px; color: #9aa0aa; }
+
+  /* Phones (a Galaxy S24 Ultra is 412 px wide): one column, the buttons under the text and big enough to tap,
+     long descriptions folded to three lines until tapped. */
+  @media (max-width: 640px) {
+    body { padding: 16px; }
+    h1 { margin-bottom: 16px; }
+    .section-head { flex-wrap: wrap; row-gap: 8px; }
+    .section-head .spacer { display: none; }
+    .section-head button { width: 100%; padding: 12px 0; font-size: 15px; }
+    .sod { margin-bottom: 28px; }
+    .task { padding: 14px; }
+    .task-row { flex-wrap: wrap; align-items: flex-start; row-gap: 10px; }
+    .task-main { flex-basis: calc(100% - 34px); }
+    .task-title { font-size: 15px; }
+    .task-desc { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .task-desc.expanded { display: block; }
+    .task-state { flex-basis: 100%; text-align: left; white-space: normal; padding-left: 34px; }
+    .task-buttons { flex-basis: 100%; }
+    .task-buttons button { flex: 1; width: auto; padding: 12px 0; font-size: 15px; }
+    .bar, .last-line, pre.log { margin-left: 0; }
+    .last-line { white-space: normal; word-break: break-word; }
+    pre.log { max-height: 60vh; }
+    .cards { flex-direction: column; }
+    .card { width: auto; }
+    button, a.open-link { padding: 12px 0; font-size: 15px; }
+  }
 </style>
 </head>
 <body>
@@ -194,6 +221,7 @@ function renderTask(t, i) {
       <div class="last-line"></div>
       <pre class="log" hidden></pre>`;
     document.getElementById("tasks").appendChild(el);
+    el.querySelector(".task-desc").onclick = e => e.currentTarget.classList.toggle("expanded");  // phones fold it
     if (t.has_preview) loadPreview(t.id);
   }
   const running = t.run && t.run.state === "running";
@@ -306,7 +334,7 @@ async function refresh() {
     document.getElementById(`start-${id}`).disabled = state === "up";
     document.getElementById(`stop-${id}`).disabled = state === "down";
     const openLink = document.getElementById(`open-${id}`);
-    openLink.href = `http://localhost:${open_port}`;
+    openLink.href = `http://${location.hostname}:${open_port}`;  // the host this page came from: localhost here, the laptop's address from a phone
     openLink.classList.toggle("disabled", state !== "up");
   }
 }
