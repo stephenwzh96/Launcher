@@ -34,6 +34,7 @@ class AppConfig(BaseModel):
     id: str
     label: str
     open_port: int
+    group: str = ""  # the page lists dashboards under their group, in the order the groups first appear
     processes: list[ProcessConfig]
 
 
@@ -42,6 +43,8 @@ class TaskConfig(BaseModel):
     id: str
     label: str
     description: str = ""
+    summary: str = ""  # one line for the page; the description is shown on request
+    when: str = ""  # when in the day it runs, as the page's time column shows it ("from 09:30")
     cwd: str
     cmd: list[str]
     expected_minutes: int | None = None

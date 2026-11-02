@@ -1,195 +1,332 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard Launcher</title>
+<meta name="color-scheme" content="light dark">
+<title>Launcher</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%231E6E52' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-  body {
-    font-family: -apple-system, Segoe UI, sans-serif;
-    background: #14161a;
-    color: #e6e6e6;
-    margin: 0;
-    padding: 40px;
+  /* A desk timetable: the day's run as steps on a rail (hollow = to do, filled green = done today, a pulsing ring
+     while running, brick = failed), then the dashboards by group. Without the web fonts it falls back to Segoe UI. */
+  :root {
+    --paper: #EDF0EE;
+    --surface: #F8FAF9;
+    --ink: #17211F;
+    --muted: #5E6B68;
+    --rule: #CDD5D2;
+    --rule-strong: #A9B5B1;
+    --green: #1E6E52;
+    --green-hover: #185C44;
+    --on-green: #FFFFFF;
+    --amber: #94600F;
+    --amber-halo: rgba(148, 96, 15, .35);
+    --brick: #A23E2B;
+    --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --cond: "IBM Plex Sans Condensed", "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
-  h1 { font-size: 20px; font-weight: 600; margin-bottom: 24px; }
-  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
-  .card {
-    background: #1e2127;
-    border: 1px solid #2c303a;
-    border-radius: 10px;
-    padding: 20px;
-    width: 220px;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121816;
+      --surface: #18201E;
+      --ink: #E3E9E6;
+      --muted: #8C9A96;
+      --rule: #2A3532;
+      --rule-strong: #3D4A46;
+      --green: #5DBB95;
+      --green-hover: #74C9A5;
+      --on-green: #0E1A15;
+      --amber: #E0A74A;
+      --amber-halo: rgba(224, 167, 74, .35);
+      --brick: #E07A62;
+    }
   }
-  .card h2 { font-size: 16px; margin: 0 0 12px; }
-  .status { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 13px; color: #9aa0aa; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
-  .dot.up { background: #3ecf6e; }
-  .dot.down { background: #555; }
-  .dot.partial { background: #e0a53f; }
-  .row { display: flex; gap: 8px; }
-  button, a.open-link {
-    flex: 1;
-    padding: 8px 0;
-    border-radius: 6px;
-    border: none;
-    font-size: 13px;
-    cursor: pointer;
-    text-align: center;
-    text-decoration: none;
-  }
-  .btn-start { background: #2c5f3f; color: #d5ffe4; }
-  .btn-stop { background: #5f2c2c; color: #ffd5d5; }
-  .btn-open { background: #2c3a5f; color: #d5e0ff; }
-  button:disabled { opacity: 0.35; cursor: default; }
-  .open-link.disabled { opacity: 0.35; pointer-events: none; }
 
-  /* Start of Day */
-  .section-head { display: flex; align-items: baseline; gap: 12px; margin: 0 0 12px; }
-  .section-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
-  .section-head .meta { font-size: 13px; color: #9aa0aa; }
-  .section-head .spacer { flex: 1; }
-  .section-head button { flex: none; padding: 7px 16px; }
-  .sod { margin-bottom: 36px; max-width: 920px; }
-  .tasks { display: flex; flex-direction: column; gap: 10px; }
-  .task {
-    background: #1e2127;
-    border: 1px solid #2c303a;
-    border-radius: 10px;
-    padding: 14px 16px;
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 14px/1.45 var(--sans); }
+  h1, h2, h3, p { margin: 0; }
+  :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 2px; }
+
+  .page { max-width: 54rem; margin: 0 auto; padding: 2rem 2rem 3rem; }
+  .top {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+    padding-bottom: .875rem; border-bottom: 1px solid var(--rule-strong);
   }
-  .task.done { border-color: #2c5f3f; }
-  .task.failed, .task.stopped, .task.unknown { border-color: #6b3a2c; }
-  .task-row { display: flex; align-items: center; gap: 12px; }
-  .task-num {
-    width: 22px; height: 22px; border-radius: 50%; flex: none;
-    display: grid; place-items: center; font-size: 12px; font-weight: 600;
-    background: #2c303a; color: #9aa0aa;
+  h1 { font: 600 22px/1.2 var(--cond); letter-spacing: -.005em; }
+  .now, .count { font: 500 14px/1.2 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  section { padding-top: 1.25rem; }
+  section + section { margin-top: 1.5rem; border-top: 1px solid var(--rule); }
+  .section-head { display: flex; align-items: center; gap: .75rem; min-height: 32px; margin-bottom: 1rem; }
+  .section-head .btn { margin-left: auto; }
+  h2 { font: 600 16px/1.2 var(--cond); }
+
+  /* Buttons: one filled action per step; outlined for the rest; Stop, Log and Details as text. */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px;
+    font: 500 14px/1 var(--sans); white-space: nowrap; text-decoration: none; cursor: pointer;
+    border: 1px solid transparent; border-radius: 4px; background: none; color: var(--ink);
   }
-  .task.done .task-num { background: #2c5f3f; color: #d5ffe4; }
-  .task.running .task-num { background: #2c3a5f; color: #d5e0ff; }
-  .task.failed .task-num, .task.stopped .task-num, .task.unknown .task-num { background: #5f2c2c; color: #ffd5d5; }
-  .task-main { flex: 1; min-width: 0; }
-  .task-title { font-size: 14px; font-weight: 600; }
-  .task-desc { font-size: 12px; color: #9aa0aa; margin-top: 2px; }
-  .task-preview { font-size: 12px; color: #e3c46b; margin-top: 4px; }
-  .task-preview.fail { color: #d68a6b; }
-  .task-state { font-size: 13px; color: #c8ccd4; text-align: right; white-space: nowrap; }
-  .task-buttons { display: flex; gap: 6px; flex: none; }
-  .task-buttons button { flex: none; width: 64px; }
-  .btn-log { background: #2c303a; color: #c8ccd4; }
-  .bar { height: 4px; background: #2c303a; border-radius: 2px; margin: 10px 0 0 34px; overflow: hidden; }
-  .bar > div { height: 100%; background: #5b7fd6; transition: width .4s; }
-  .task.done .bar > div { background: #3ecf6e; }
-  .task.failed .bar > div, .task.stopped .bar > div { background: #d65b5b; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.primary { background: var(--green); color: var(--on-green); }
+  .btn.primary:not(:disabled):hover { background: var(--green-hover); }
+  .btn.secondary { background: var(--surface); border-color: var(--rule-strong); }
+  .btn.secondary:not(:disabled):hover { border-color: var(--muted); }
+  .btn.link { padding: 0 8px; color: var(--muted); }
+  .btn.link:not(:disabled):hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+  .btn.link.stop:not(:disabled):hover { color: var(--brick); }
+  .btn.inline {
+    display: inline; height: auto; padding: 0; font: inherit; color: var(--muted);
+    text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px;
+  }
+  .btn.inline:hover { color: var(--ink); text-decoration-color: currentColor; }
+
+  /* Today's run: the time column, the rail, the step, its actions; the log spans the step and actions columns. */
+  .steps { list-style: none; margin: 0; padding: 0; }
+  .step {
+    --mark-top: 5px;
+    --gap: 1.375rem;
+    display: grid;
+    grid-template-columns: 5.25rem 1.25rem minmax(0, 1fr) 10.5rem;  /* fixed actions: every step's text wraps alike */
+    grid-template-areas: "when rail body actions" ".    rail log  log";
+    column-gap: .875rem;
+    padding-bottom: var(--gap);
+  }
+  .step:last-child { --gap: 0px; }
+  .when {
+    grid-area: when; text-align: right; white-space: nowrap;
+    font: 500 14px/22px var(--cond); color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .rail { grid-area: rail; position: relative; margin-bottom: calc(-1 * var(--gap)); }
+  .rail::before {
+    content: ""; position: absolute; z-index: 1; left: 50%; top: var(--mark-top);
+    width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
+    border: 2px solid var(--rule-strong); background: var(--paper);
+  }
+  .step:not(:last-child) .rail::after {
+    content: ""; position: absolute; left: 50%; width: 2px; margin-left: -1px;
+    top: calc(var(--mark-top) + 16px); bottom: calc(4px - var(--mark-top)); background: var(--rule);
+  }
+  .step[data-state="done"] .rail::before { background: var(--green); border-color: var(--green); }
+  .step[data-state="done"] .rail::after { background: var(--green); }
+  .step[data-state="queued"] .rail::before { border-color: var(--amber); }
+  .step[data-state="running"] .rail::before {
+    border-color: var(--amber); background: radial-gradient(circle, var(--amber) 0 2px, var(--paper) 2.5px);
+    animation: pulse 1.8s ease-out infinite;
+  }
+  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"]) .rail::before {
+    background: var(--brick); border-color: var(--brick);
+  }
+  @keyframes pulse {
+    from { box-shadow: 0 0 0 0 var(--amber-halo); }
+    to { box-shadow: 0 0 0 8px transparent; }
+  }
+
+  .body { grid-area: body; min-width: 0; }
+  .name { font: 600 16px/22px var(--cond); }
+  .state { margin-top: 1px; font: 500 14px/1.35 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .step[data-state="done"] .state { color: var(--green); }
+  .step:is([data-state="running"], [data-state="queued"]) .state { color: var(--amber); }
+  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"]) .state { color: var(--brick); }
+  .summary, .desc, .preview { max-width: 66ch; margin-top: .375rem; }
+  .desc { color: var(--muted); white-space: pre-line; }
+  .preview { color: var(--amber); }
+  .preview.fail { color: var(--brick); }
+  .bar { height: 3px; margin-top: .625rem; background: var(--rule); border-radius: 2px; overflow: hidden; }
+  .bar > span { display: block; width: 0; height: 100%; background: var(--amber); transition: width .4s; }
+  .step:is([data-state="failed"], [data-state="stopped"]) .bar > span { background: var(--brick); }
   .last-line {
-    font: 11px ui-monospace, Consolas, monospace; color: #7d838e; margin: 6px 0 0 34px;
+    margin-top: .375rem; font: 12px/1.4 var(--mono); color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  pre.log {
-    font: 11px/1.45 ui-monospace, Consolas, monospace; color: #c8ccd4; background: #14161a;
-    border: 1px solid #2c303a; border-radius: 6px; padding: 10px; margin: 10px 0 0 34px;
-    max-height: 320px; overflow: auto; white-space: pre-wrap;
+  .actions {
+    grid-area: actions; align-self: start; display: flex; align-items: center; justify-content: flex-end; gap: .25rem;
+    margin-top: -5px;
   }
-  .empty { font-size: 13px; color: #9aa0aa; }
+  .log {
+    grid-area: log; margin: .75rem 0 0; padding: .625rem .75rem; max-height: 20rem; overflow: auto;
+    font: 12px/1.5 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+  }
 
-  /* Phones (a Galaxy S24 Ultra is 412 px wide): one column, the buttons under the text and big enough to tap,
-     long descriptions folded to three lines until tapped. */
+  /* Dashboards, by group */
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.25rem 2.5rem; align-items: start; }
+  .group h3 {
+    padding-bottom: .375rem; border-bottom: 1px solid var(--rule-strong);
+    font: 600 14px/1.3 var(--cond); color: var(--muted);
+  }
+  .apps { list-style: none; margin: 0; padding: 0; }
+  .app { display: flex; align-items: center; gap: .625rem; min-height: 2.75rem; padding: .375rem 0; border-bottom: 1px solid var(--rule); }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--rule-strong); }
+  .app[data-state="up"] .dot { background: var(--green); border-color: var(--green); }
+  .app[data-state="partial"] .dot { border-color: var(--amber); }
+  .app-label { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: .5rem; }
+  .app-name { font-weight: 500; }
+  .app-state { font: 500 12px/1.3 var(--cond); color: var(--muted); }
+  .app[data-state="up"] .app-state { color: var(--green); }
+  .app[data-state="partial"] .app-state { color: var(--amber); }
+  .app-actions { display: flex; align-items: center; gap: .25rem; }
+  .app .btn { height: 28px; }
+
+  .empty { color: var(--muted); }
+
+  /* Phones (a Galaxy S24 Ultra is 412 px wide): the time goes above the step, the actions under it, and every
+     button is at least 44 px tall. */
   @media (max-width: 640px) {
-    body { padding: 16px; }
-    h1 { margin-bottom: 16px; }
-    .section-head { flex-wrap: wrap; row-gap: 8px; }
-    .section-head .spacer { display: none; }
-    .section-head button { width: 100%; padding: 12px 0; font-size: 15px; }
-    .sod { margin-bottom: 28px; }
-    .task { padding: 14px; }
-    .task-row { flex-wrap: wrap; align-items: flex-start; row-gap: 10px; }
-    .task-main { flex-basis: calc(100% - 34px); }
-    .task-title { font-size: 15px; }
-    .task-desc { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-    .task-desc.expanded { display: block; }
-    .task-state { flex-basis: 100%; text-align: left; white-space: normal; padding-left: 34px; }
-    .task-buttons { flex-basis: 100%; }
-    .task-buttons button { flex: 1; width: auto; padding: 12px 0; font-size: 15px; }
-    .bar, .last-line, pre.log { margin-left: 0; }
+    .page { padding: 1rem 1rem 2.5rem; }
+    .top { flex-direction: column; align-items: flex-start; gap: .25rem; }
+    .btn { min-height: 44px; padding: 0 16px; font-size: 15px; }
+    .btn.link { padding: 0 10px; }
+    .btn.inline { min-height: 0; padding: 0; font-size: inherit; }
+    .step {
+      --mark-top: 3px;
+      grid-template-columns: 1.25rem minmax(0, 1fr);
+      grid-template-areas: "rail when" "rail body" "rail actions" "rail log";
+      column-gap: .75rem;
+    }
+    .when { text-align: left; font-size: 12px; line-height: 18px; }
+    .actions { margin-top: .75rem; }
+    .actions .start { flex: 1; }
     .last-line { white-space: normal; word-break: break-word; }
-    pre.log { max-height: 60vh; }
-    .cards { flex-direction: column; }
-    .card { width: auto; }
-    button, a.open-link { padding: 12px 0; font-size: 15px; }
+    .log { max-height: 60vh; }
+    .groups { grid-template-columns: 1fr; }
+    .app .btn { height: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .step[data-state="running"] .rail::before { animation: none; }
+    .bar > span { transition: none; }
   }
 </style>
 </head>
 <body>
-<h1>Dashboard Launcher</h1>
+<div class="page">
+  <header class="top">
+    <h1>Launcher</h1>
+    <p class="now" id="now"></p>
+  </header>
 
-<section class="sod">
-  <div class="section-head">
-    <h2>Start of Day</h2>
-    <span class="meta" id="sod-summary"></span>
-    <span class="spacer"></span>
-    <button class="btn-start" id="sod-run-all" onclick="runAll()">Run all</button>
-  </div>
-  <div class="tasks" id="tasks"></div>
-</section>
+  <section aria-labelledby="run-heading">
+    <div class="section-head">
+      <h2 id="run-heading">Today's run</h2>
+      <span class="count" id="run-count"></span>
+      <button type="button" class="btn secondary" id="run-all">Run all</button>
+    </div>
+    <ol class="steps" id="tasks"></ol>
+  </section>
 
-<div class="section-head"><h2>Dashboards</h2></div>
-<div class="cards" id="cards"></div>
+  <section aria-labelledby="dash-heading">
+    <div class="section-head">
+      <h2 id="dash-heading">Dashboards</h2>
+      <span class="count" id="dash-count"></span>
+    </div>
+    <div class="groups" id="groups"></div>
+  </section>
+</div>
+
+<template id="tpl-step">
+  <li class="step" data-state="todo">
+    <div class="when"></div>
+    <div class="rail" aria-hidden="true"></div>
+    <div class="body">
+      <h3 class="name"></h3>
+      <p class="state"></p>
+      <p class="summary"><span class="summary-text"></span> <button type="button" class="btn inline details" aria-expanded="false">Details</button></p>
+      <p class="desc" hidden></p>
+      <p class="preview" hidden></p>
+      <div class="bar" hidden><span></span></div>
+      <p class="last-line" hidden></p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn link log-toggle" aria-expanded="false">Log</button>
+      <button type="button" class="btn link stop">Stop</button>
+      <button type="button" class="btn primary start">Start</button>
+    </div>
+    <pre class="log" hidden></pre>
+  </li>
+</template>
+
+<template id="tpl-group">
+  <div class="group"><h3></h3><ul class="apps"></ul></div>
+</template>
+
+<template id="tpl-app">
+  <li class="app" data-state="checking">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="app-label"><span class="app-name"></span><span class="app-state">Checking</span></span>
+    <span class="app-actions">
+      <button type="button" class="btn link stop" hidden>Stop</button>
+      <a class="btn secondary open" target="_blank" rel="noopener" hidden>Open</a>
+      <button type="button" class="btn secondary start" hidden>Start</button>
+    </span>
+  </li>
+</template>
 
 <script>
-async function init() {
-  const res = await fetch("/api/apps");
-  const apps = await res.json();
-  const cardsEl = document.getElementById("cards");
-  cardsEl.innerHTML = apps.map(a => `
-    <div class="card" id="card-${a.id}">
-      <h2>${a.label}</h2>
-      <div class="status"><span class="dot" id="dot-${a.id}"></span><span id="text-${a.id}">checking…</span></div>
-      <div class="row">
-        <button class="btn-start" id="start-${a.id}" onclick="startApp('${a.id}')">Start</button>
-        <button class="btn-stop" id="stop-${a.id}" onclick="stopApp('${a.id}')">Stop</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <a class="open-link btn-open" id="open-${a.id}" target="_blank">Open</a>
-      </div>
-    </div>
-  `).join("");
-  refresh();
-  setInterval(refresh, 3000);
-  refreshTasks();
-}
+const $ = (sel, root = document) => root.querySelector(sel);
+const clone = id => document.getElementById(id).content.firstElementChild.cloneNode(true);
 
-// ---------- Start of Day tasks (tasks.yaml) ----------
-const openLogs = new Set();
-let taskTimer = null;
-
-const hhmm = iso => iso ? iso.slice(11, 16) : "";
+const hhmm = iso => (iso ? iso.slice(11, 16) : "");
 const minutes = (a, b) => Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000));
 const isToday = iso => iso && iso.slice(0, 10) === new Date().toLocaleDateString("en-CA");
+
+function tick() {
+  const d = new Date();
+  const weekday = d.toLocaleDateString("en-AU", { weekday: "long" });
+  const month = d.toLocaleDateString("en-AU", { month: "long" });
+  const time = d.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+  $("#now").textContent = `${weekday} ${d.getDate()} ${month}, ${time}`;
+}
+
+async function init() {
+  tick();
+  setInterval(tick, 10000);
+  $("#run-all").onclick = runAll;
+  refreshTasks();
+  renderApps(await (await fetch("/api/apps")).json());
+  refresh();
+  setInterval(refresh, 3000);
+}
+
+// ---------- Today's run (tasks.yaml) ----------
+const openLogs = new Set();
+const tasksById = {};
+const lastState = {};
+let taskTimer = null;
+
+// The rail marker and the colour of the state line: a success from an earlier day is due again, so it is "todo".
+function stepState(t) {
+  const r = t.run;
+  if (t.queued) return "queued";
+  if (!r) return "todo";
+  if (r.state === "done") return t.done_today ? "done" : "todo";
+  return r.state;  // running, failed, stopped, unknown
+}
 
 function stateText(t) {
   const r = t.run;
   if (t.queued) return "Queued";
   if (!r) return "Not run yet";
-  const step = r.step ? `${r.step.k}/${r.step.n} ${r.step.title}` : "";
-  const when = isToday(r.started) ? hhmm(r.started) : `${r.started.slice(0, 10)} ${hhmm(r.started)}`;
+  const at = isToday(r.started) ? hhmm(r.started) : `${r.started.slice(0, 10)} ${hhmm(r.started)}`;
+  const step = r.step ? `step ${r.step.k} of ${r.step.n}: ${r.step.title}` : "";
   if (r.state === "running") {
-    const of = t.expected_minutes ? ` of ~${t.expected_minutes}` : "";
-    return `Running ${step} · ${minutes(r.started, new Date())} min${of}`;
+    const of = t.expected_minutes ? ` of about ${t.expected_minutes}` : "";
+    return `Running${step ? `, ${step}` : ""} (${minutes(r.started, new Date())} min${of})`;
   }
-  const took = r.finished ? ` · ${minutes(r.started, r.finished)} min` : "";
-  if (r.state === "done") return `${isToday(r.started) ? "Done today" : "Last done"} ${when}${took}`;
-  if (r.state === "failed") return `Failed at ${step || "start"} · ${when}`;
-  if (r.state === "stopped") return `Stopped at ${step || "start"} · ${when}`;
-  return `Result unknown (launcher restarted) · ${when}`;
-}
-
-function cardClass(t) {
-  const r = t.run;
-  if (t.queued) return "queued";
-  if (!r) return "";
-  if (r.state === "done") return t.done_today ? "done" : "";  // yesterday's success: due again today
-  return r.state;
+  if (r.state === "done") {
+    if (!t.done_today) return `Last done ${at}`;
+    const took = r.finished ? `, ${minutes(r.started, r.finished)} min` : "";
+    return `Done at ${hhmm(r.finished || r.started)}${took}`;
+  }
+  const where = step ? `at ${step}` : "at the start";
+  if (r.state === "failed") return `Failed ${where}, ${at}`;
+  if (r.state === "stopped") return `Stopped ${where}, ${at}`;
+  return `Result unknown: the launcher restarted during the run, ${at}`;
 }
 
 function barWidth(t) {
@@ -201,47 +338,50 @@ function barWidth(t) {
   return Math.round((100 * k) / r.step.n);
 }
 
-function renderTask(t, i) {
+function renderTask(t) {
+  tasksById[t.id] = t;
   let el = document.getElementById(`task-${t.id}`);
   if (!el) {
-    el = document.createElement("div");
+    el = clone("tpl-step");
     el.id = `task-${t.id}`;
-    el.innerHTML = `
-      <div class="task-row">
-        <span class="task-num">${i + 1}</span>
-        <div class="task-main"><div class="task-title"></div><div class="task-desc"></div><div class="task-preview" hidden></div></div>
-        <div class="task-state"></div>
-        <div class="task-buttons">
-          <button class="btn-start" onclick="startTask('${t.id}')">Start</button>
-          <button class="btn-stop" onclick="stopTask('${t.id}')">Stop</button>
-          <button class="btn-log" onclick="toggleLog('${t.id}')">Log</button>
-        </div>
-      </div>
-      <div class="bar"><div></div></div>
-      <div class="last-line"></div>
-      <pre class="log" hidden></pre>`;
-    document.getElementById("tasks").appendChild(el);
-    el.querySelector(".task-desc").onclick = e => e.currentTarget.classList.toggle("expanded");  // phones fold it
+    $(".start", el).onclick = () => startTask(t.id);
+    $(".stop", el).onclick = () => stopTask(t.id);
+    $(".log-toggle", el).onclick = () => toggleLog(t.id);
+    $(".details", el).onclick = e => {
+      const desc = $(".desc", el);
+      desc.hidden = !desc.hidden;
+      e.currentTarget.setAttribute("aria-expanded", String(!desc.hidden));
+      e.currentTarget.textContent = desc.hidden ? "Details" : "Hide details";
+    };
+    $("#tasks").append(el);
     if (t.has_preview) loadPreview(t.id);
   }
-  const running = t.run && t.run.state === "running";
-  el.className = `task ${cardClass(t)}`;
-  el.querySelector(".task-title").textContent = t.label;
-  el.querySelector(".task-desc").textContent = t.description;
-  el.querySelector(".task-state").textContent = stateText(t);
-  el.querySelector(".task-num").textContent = t.done_today ? "✓" : String(i + 1);
-  el.querySelector(".bar > div").style.width = `${barWidth(t)}%`;
-  el.querySelector(".last-line").textContent = running || (t.run && t.run.state !== "done") ? t.run.last_line : "";
-  el.querySelector(".btn-start").disabled = running || t.queued;
-  el.querySelector(".btn-start").textContent = t.done_today ? "Rerun" : "Start";
-  el.querySelector(".btn-stop").disabled = !running;
-  el.querySelector(".btn-log").disabled = !t.run;
+  const state = stepState(t);
+  const running = state === "running";
+  el.dataset.state = state;
+  $(".when", el).textContent = t.when;
+  $(".name", el).textContent = t.label;
+  $(".state", el).textContent = stateText(t);
+  $(".summary-text", el).textContent = t.summary || t.description;
+  $(".details", el).hidden = !(t.summary && t.description);  // no summary: the description is already shown
+  $(".desc", el).textContent = t.description;
+  $(".bar", el).hidden = !["running", "failed", "stopped"].includes(state);
+  $(".bar > span", el).style.width = `${barWidth(t)}%`;
+  const last = t.run && t.run.state !== "done" ? t.run.last_line || "" : "";
+  $(".last-line", el).textContent = last;
+  $(".last-line", el).hidden = !last;
+  const start = $(".start", el);
+  start.hidden = running || t.queued;
+  start.disabled = false;  // startTask disables it until the run shows up
+  start.textContent = t.done_today ? "Rerun" : "Start";
+  $(".stop", el).hidden = !running;
+  $(".log-toggle", el).hidden = !t.run;
 }
 
 // A task's preview_cmd says what today's run will do (e.g. which downloads); checked when the page opens and
 // again after a run ends, since the answer can change once the run has fetched what was due.
 async function loadPreview(id, fresh = false) {
-  const box = document.querySelector(`#task-${id} .task-preview`);
+  const box = $(`#task-${id} .preview`);
   box.hidden = false;
   box.classList.remove("fail");
   box.textContent = "Checking today's plan…";
@@ -256,8 +396,6 @@ async function loadPreview(id, fresh = false) {
   }
 }
 
-const lastState = {};
-
 async function refreshTasks() {
   clearTimeout(taskTimer);
   let data;
@@ -268,9 +406,7 @@ async function refreshTasks() {
     return;
   }
   const tasks = data.tasks;
-  if (!tasks.length) {
-    document.getElementById("tasks").innerHTML = '<div class="empty">No tasks: add them to tasks.yaml.</div>';
-  }
+  if (!tasks.length) $("#tasks").innerHTML = '<li class="empty">No tasks yet: add them to tasks.yaml.</li>';
   tasks.forEach(renderTask);
   for (const t of tasks) {  // a run just ended: what is due has changed
     const state = t.run ? t.run.state : "none";
@@ -279,78 +415,122 @@ async function refreshTasks() {
   }
   const done = tasks.filter(t => t.done_today).length;
   const busy = data.running_all || tasks.some(t => t.run && t.run.state === "running");
-  const today = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
-  document.getElementById("sod-summary").textContent = `${today} · ${done} of ${tasks.length} done today`;
-  const all = document.getElementById("sod-run-all");
+  $("#run-count").textContent = tasks.length ? `${done} of ${tasks.length} done today` : "";
+  const all = $("#run-all");
   all.disabled = busy || done === tasks.length;
   all.textContent = data.running_all ? "Running…" : "Run all";
+  tick();
   for (const id of openLogs) await loadLog(id);
   taskTimer = setTimeout(refreshTasks, busy ? 2000 : 5000);
 }
 
 async function loadLog(id) {
-  const pre = document.querySelector(`#task-${id} pre.log`);
+  const pre = $(`#task-${id} pre.log`);
   const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
   pre.textContent = await (await fetch(`/api/tasks/${id}/log`)).text() || "(empty log)";
   if (atEnd) pre.scrollTop = pre.scrollHeight;  // follow the log unless the user scrolled up
 }
 
 async function toggleLog(id) {
-  const pre = document.querySelector(`#task-${id} pre.log`);
+  const pre = $(`#task-${id} pre.log`);
+  const btn = $(`#task-${id} .log-toggle`);
   pre.hidden = !pre.hidden;
+  btn.setAttribute("aria-expanded", String(!pre.hidden));
+  btn.textContent = pre.hidden ? "Log" : "Hide log";
   if (pre.hidden) openLogs.delete(id);
   else { openLogs.add(id); await loadLog(id); pre.scrollTop = pre.scrollHeight; }
 }
 
 async function startTask(id) {
-  const t = document.querySelector(`#task-${id} .btn-start`);
-  if (t.textContent === "Rerun" && !confirm("This task already ran successfully today. Run it again?")) return;
-  t.disabled = true;
+  const t = tasksById[id];
+  if (t.done_today && !confirm(`${t.label} already finished today. Run it again?`)) return;
+  $(`#task-${id} .start`).disabled = true;
   const data = await (await fetch(`/api/tasks/${id}/start`, { method: "POST" })).json();
-  if (!data.ok) alert(`Failed to start:\n${data.errors.join("\n")}`);
+  if (!data.ok) alert(`Could not start ${t.label}:\n${data.errors.join("\n")}`);
   refreshTasks();
 }
 
 async function stopTask(id) {
-  if (!confirm("Stop this task? Steps already finished are kept; the current step is cut short.")) return;
+  if (!confirm(`Stop ${tasksById[id].label}? Steps already finished are kept; the current step is cut short.`)) return;
   await fetch(`/api/tasks/${id}/stop`, { method: "POST" });
   refreshTasks();
 }
 
 async function runAll() {
-  document.getElementById("sod-run-all").disabled = true;
+  $("#run-all").disabled = true;
   await fetch("/api/tasks/run-all", { method: "POST" });
   refreshTasks();
 }
 
-async function refresh() {
-  const res = await fetch("/api/status");
-  const data = await res.json();
-  for (const id in data) {
-    const { state, open_port } = data[id];
-    document.getElementById(`dot-${id}`).className = `dot ${state}`;
-    document.getElementById(`text-${id}`).textContent =
-      state === "up" ? "running" : state === "partial" ? "starting…" : "stopped";
-    document.getElementById(`start-${id}`).disabled = state === "up";
-    document.getElementById(`stop-${id}`).disabled = state === "down";
-    const openLink = document.getElementById(`open-${id}`);
-    openLink.href = `http://${location.hostname}:${open_port}`;  // the host this page came from: localhost here, the laptop's address from a phone
-    openLink.classList.toggle("disabled", state !== "up");
+// ---------- Dashboards (apps.yaml) ----------
+const APP_STATE = { up: "Running", partial: "Starting", down: "Stopped" };
+const appLabels = {};
+
+function renderApps(apps) {
+  const root = $("#groups");
+  if (!apps.length) {
+    root.innerHTML = '<p class="empty">No dashboards yet: add them to apps.yaml.</p>';
+    return;
+  }
+  const groups = new Map();  // in the order they first appear
+  for (const a of apps) {
+    if (!groups.has(a.group)) groups.set(a.group, []);
+    groups.get(a.group).push(a);
+  }
+  for (const [name, list] of groups) {
+    const g = clone("tpl-group");
+    $("h3", g).textContent = name;
+    $("h3", g).hidden = !name;
+    for (const a of list) {
+      appLabels[a.id] = a.label;
+      const row = clone("tpl-app");
+      row.id = `app-${a.id}`;
+      $(".app-name", row).textContent = a.label;
+      $(".start", row).onclick = () => startApp(a.id);
+      $(".stop", row).onclick = () => stopApp(a.id);
+      $(".apps", g).append(row);
+    }
+    root.append(g);
   }
 }
 
-async function startApp(id) {
-  document.getElementById(`start-${id}`).disabled = true;
-  const res = await fetch(`/api/start/${id}`, { method: "POST" });
-  const data = await res.json();
-  if (!data.ok) {
-    alert(`Failed to start:\n${data.errors.join("\n")}`);
+async function refresh() {
+  let data;
+  try {
+    data = await (await fetch("/api/status")).json();
+  } catch {
+    return;
   }
+  let up = 0;
+  let n = 0;
+  for (const id in data) {
+    const row = document.getElementById(`app-${id}`);
+    if (!row) continue;
+    const { state, open_port } = data[id];
+    n += 1;
+    if (state === "up") up += 1;
+    row.dataset.state = state;
+    $(".app-state", row).textContent = APP_STATE[state] || state;
+    const open = $(".open", row);
+    open.href = `http://${location.hostname}:${open_port}`;  // the host this page came from: localhost here, the laptop's address from a phone
+    open.hidden = state !== "up";
+    $(".start", row).hidden = state !== "down";
+    $(".start", row).disabled = false;
+    $(".stop", row).hidden = state === "down";
+    $(".stop", row).disabled = false;
+  }
+  $("#dash-count").textContent = `${up} of ${n} running`;
+}
+
+async function startApp(id) {
+  $(`#app-${id} .start`).disabled = true;
+  const data = await (await fetch(`/api/start/${id}`, { method: "POST" })).json();
+  if (!data.ok) alert(`Could not start ${appLabels[id]}:\n${data.errors.join("\n")}`);
   setTimeout(refresh, 500);
 }
 
 async function stopApp(id) {
-  document.getElementById(`stop-${id}`).disabled = true;
+  $(`#app-${id} .stop`).disabled = true;
   await fetch(`/api/stop/${id}`, { method: "POST" });
   setTimeout(refresh, 500);
 }

@@ -6,9 +6,12 @@
 # each of its n steps. Its exit code decides Done (0) or Failed.
 # preview_cmd (optional): a quick command whose last output line says what today's run will do; the panel shows it
 # under the task before Start.
+# summary: one line the page shows; description: the full text, behind Details. when: the time column ("from 09:30").
 
 - id: aijpmt1a-refresh
   label: MTFA Start of Day
+  summary: Fetches the data, waits for every market's close until 14:30, then writes the day's trade files for MTFA, MTFB and MTFC.
+  when: from 09:30
   description: Free-source data, then waits for every market's close of the decision date (holidays excepted), until 14:30 Sydney at the latest, then panels, the monitoring runs and dashboards of MTFA, MTFB and MTFC, and the IBKR target envelopes of all three (MTFB's and MTFC's in their own folders).
     Start any time from about 09:30 Sydney. Done = every envelope written; Failed with exit 2 = HOLD (no envelope at all); Failed with exit 1 = MTFA's envelope is written but a clone's is not or a dashboard export failed, or a step stopped the run. data/logs/sod_<date>.json says which.
   cwd: ../Trend/AIJPMT1A_build
@@ -18,6 +21,8 @@
 
 - id: ibkr-paper-cycle
   label: IBKR paper cycle
+  summary: Builds the day's trade list and waits for your approval; press again to trade it overnight.
+  when: by 16:25
   description: The IBKR paper book's day, on the strategy picked with "Trade on paper" on the Trend dashboard (MTFA until you switch). Start it once MTFA Start of Day says GO and before the first trading window (about 16:25 Sydney); it needs the server's gateway logged in.
     First press - pre-open, books and the day's trade list, then Done while the list waits for your approval; the log ends with the list and its cycle id. Review it on the MTFA Execution card, approve it, then press Start again. Second press - it trades the day's windows and keeps running until the night's reconcile (about 08:20 Sydney), so leave the laptop on and plugged in. Failed = halted (the log and the execution dashboard say why) or the gateway could not be reached.
   cwd: ../IBKR

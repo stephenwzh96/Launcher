@@ -2,12 +2,36 @@
 # (the parent of this launcher/ directory). cmd tokens containing a slash are
 # resolved the same way; bare tokens (like "npm.cmd") are looked up on PATH.
 #
+# group: the heading the page lists the dashboard under (groups in the order they first appear).
+#
 # health: "tcp" (default) just checks the port accepts a connection.
 #         "http" additionally requires a 2xx/3xx response on health_path --
 #         use this for anything that opens its port before it's actually ready.
 
+- id: mtfa
+  label: MTFA Trend Following
+  group: Trend program
+  open_port: 5180
+  processes:
+    - cwd: ../Trend/AIJPMT1A_build/dashboard
+      cmd: ["npm.cmd", "run", "dev", "--prefix", "../Trend/AIJPMT1A_build/dashboard",
+            "--", "--port", "5180", "--strictPort"]
+      port: 5180
+      log: mtfa_dashboard.log
+
+- id: mtfa-execution
+  label: MTFA Execution
+  group: Trend program
+  open_port: 5181
+  processes:
+    - cwd: ../IBKR/dashboard
+      cmd: ["npm.cmd", "run", "dev", "--prefix", "../IBKR/dashboard"]
+      port: 5181
+      log: mtfa_execution.log
+
 - id: fomc
   label: United States Rates
+  group: Rates and pricing
   open_port: 8502
   processes:
     - cwd: FOMC
@@ -18,6 +42,7 @@
 
 - id: aus
   label: Australia Rates
+  group: Rates and pricing
   open_port: 8501
   processes:
     - cwd: Australia-Rates
@@ -28,6 +53,7 @@
 
 - id: cb
   label: CB Pricer
+  group: Rates and pricing
   open_port: 5173
   processes:
     - cwd: CB Pricer/backend
@@ -42,6 +68,7 @@
 
 - id: curve
   label: Curve
+  group: Rates and pricing
   open_port: 8010
   processes:
     - cwd: Curve/backend
@@ -49,22 +76,3 @@
             "app.main:app", "--port", "8010"]
       port: 8010
       log: curve.log
-
-- id: mtfa
-  label: MTFA Trend Following
-  open_port: 5180
-  processes:
-    - cwd: ../Trend/AIJPMT1A_build/dashboard
-      cmd: ["npm.cmd", "run", "dev", "--prefix", "../Trend/AIJPMT1A_build/dashboard",
-            "--", "--port", "5180", "--strictPort"]
-      port: 5180
-      log: mtfa_dashboard.log
-
-- id: mtfa-execution
-  label: MTFA Execution
-  open_port: 5181
-  processes:
-    - cwd: ../IBKR/dashboard
-      cmd: ["npm.cmd", "run", "dev", "--prefix", "../IBKR/dashboard"]
-      port: 5181
-      log: mtfa_execution.log

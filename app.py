@@ -42,7 +42,7 @@ def _get_app(app_id: str):
 
 @app.get("/api/apps")
 def list_apps():
-    return [{"id": a.id, "label": a.label} for a in APPS.values()]
+    return [{"id": a.id, "label": a.label, "group": a.group} for a in APPS.values()]
 
 
 @app.get("/api/status")

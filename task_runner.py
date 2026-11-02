@@ -171,6 +171,8 @@ class TaskRunner:
                     "id": task_id,
                     "label": task.label,
                     "description": task.description,
+                    "summary": task.summary,
+                    "when": task.when,
                     "expected_minutes": task.expected_minutes,
                     "has_preview": bool(task.preview_cmd),
                     "done_today": self._done_today(task_id),
