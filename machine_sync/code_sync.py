@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +21,7 @@ class RepoResult:
     before: str = ""
     after: str = ""
     warnings: list[str] = field(default_factory=list)
+    state: RepoState | None = None  # the checkout after this run (for the note)
 
 
 def repo_note(state: RepoState, running: bool) -> dict:
@@ -139,13 +141,13 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
         r.line = "not on this PC"
         return r
     fetched = git(path, "fetch", "--all", "--prune", "--quiet")
-    s = read_repo(path)
+    s = read_repo(path)  # after the fetch: it may have pruned this branch's GitHub branch
     r.before = r.after = s.head
+    r.state = s
     if fetched.returncode != 0:
         r.line = f"{_where(s.branch, s.head)}  could not reach GitHub"
         r.warnings.append(f"{repo}: could not reach GitHub ({_first_line(fetched.stderr)})")
         return r
-    s = read_repo(path)  # the fetch may have pruned this branch's GitHub branch
     ff_other_branches(path, s.branch)
     notes: list[str] = []
     who = cfg.peer
@@ -192,6 +194,7 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
         else:
             _ff_current(path, repo, s, r)
     end = read_repo(path)
+    r.state = end
     r.after = end.head
     r.moved = end.head != s.head or end.branch != s.branch
     if r.moved:
@@ -208,6 +211,9 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
 
 
 # ----------------------------------------------------------------- after a move: libraries
+_PENDING_LOCK = threading.Lock()  # repos run in parallel threads; they share pending_uv.json
+
+
 def _pending_path(cfg: Settings) -> Path:
     return cfg.sync_dir / "pending_uv.json"
 
@@ -249,7 +255,7 @@ def after_move(cfg: Settings, repo: str, before: str, after: str, in_use: set[Pa
                uv_cmd: list[str] | None = None) -> list[str]:
     path = cfg.repo_path(repo)
     uv_cmd = uv_cmd if uv_cmd is not None else _default_uv()
-    lines, pending = [], _load_pending(cfg)
+    lines, waiting = [], []
     for changed in out(path, "diff", "--name-only", before, after).splitlines():
         folder = Path(changed).parent
         where = f"{repo}\\{folder}" if str(folder) != "." else repo
@@ -259,12 +265,14 @@ def after_move(cfg: Settings, repo: str, before: str, after: str, in_use: set[Pa
             if why:
                 lines.append(why)
                 if "close the app" in why or "uv was not found" in why:
-                    pending.append(str(app))
+                    waiting.append(str(app))
         elif changed.endswith("package-lock.json"):
             lines.append(f"{where}: package-lock.json changed: run npm ci in {where}")
         elif changed.endswith(".python-version"):
             lines.append(f"{where}: .python-version changed: rebuild that .venv by hand")
-    _save_pending(cfg, pending)
+    if waiting:
+        with _PENDING_LOCK:
+            _save_pending(cfg, _load_pending(cfg) + waiting)
     return lines
 
 

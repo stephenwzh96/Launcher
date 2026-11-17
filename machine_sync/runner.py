@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from . import NOTE_FORMAT
@@ -12,8 +13,7 @@ from . import claims as day_claims
 from .code_sync import RepoResult, repo_note, retry_pending_uv, sync_code
 from .daily import (busy_repos, code_frozen, load_daily_tasks, read_claims, record_claim, running_tasks,
                     venvs_in_use)
-from .data_sync import ImportResult, load_state, read_note, sync_data
-from .gitops import read_repo
+from .data_sync import ImportResult, load_state, read_alive, read_note, sync_data
 from .procs import Proc, processes
 from .selfupdate import self_update
 from .settings import Settings
@@ -111,21 +111,24 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
         warnings.append(f"could not read today's claim from GitHub ({err})")
     frozen = code_frozen(cfg, now) and not update_frozen
     peer_repos = (peer_note or {}).get("repos") or {}
-    results: list[RepoResult] = []
-    for repo in cfg.repos:
-        r = sync_code(cfg, repo, peer_repos.get(repo), frozen=frozen and repo in busy,
-                      running=repo in running_repos, in_use=in_use, uv_cmd=uv_cmd)
-        results.append(r)
+
+    def one(repo: str) -> RepoResult:
+        return sync_code(cfg, repo, peer_repos.get(repo), frozen=frozen and repo in busy,
+                         running=repo in running_repos, in_use=in_use, uv_cmd=uv_cmd)
+
+    with ThreadPoolExecutor(max_workers=len(cfg.repos) or 1) as pool:  # repos are independent: fetch in parallel
+        results: list[RepoResult] = list(pool.map(one, cfg.repos))
+    for r in results:
         warnings += r.warnings
     warnings += retry_pending_uv(cfg, in_use, uv_cmd)
     if updated := self_update(cfg):
         warnings.append(updated)
-    repos_note = {repo: repo_note(read_repo(cfg.repo_path(repo)), repo in running_repos)
-                  for repo in cfg.repos if (cfg.repo_path(repo) / ".git").exists()}
+    repos_note = {r.repo: repo_note(r.state, r.repo in running_repos) for r in results if r.state}
     state = load_state(cfg)
     res: ImportResult = sync_data(cfg, state, peer_note, now.timestamp(), frozen_repos=running_repos,
                                   allow_deletes=allow_deletes,
                                   note_extra={"repos": repos_note, "claims": read_claims(cfg.sync_dir)})
-    text = render(cfg, now, results, res, state, shown_note, warnings, read_claims(cfg.sync_dir))
+    text = render(cfg, now, results, res, state, shown_note, warnings, read_claims(cfg.sync_dir),
+                  peer_seen=read_alive(cfg, cfg.peer))
     write_status(cfg, now, text)
     return text

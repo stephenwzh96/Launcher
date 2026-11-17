@@ -18,14 +18,14 @@ def _clash_line(c: dict, where: str) -> str:
 
 
 def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportResult, state: dict,
-           peer_note: dict | None, warnings: list[str], claims: list[dict]) -> str:
+           peer_note: dict | None, warnings: list[str], claims: list[dict], peer_seen: float | None = None) -> str:
     peer = cfg.peer
     head = f"Sync status on {cfg.machine}, {now:%d %b %H:%M}"
     if peer_note:
-        written = datetime.fromtimestamp(peer_note.get("written", 0))
-        age = (now - written).total_seconds() / 60
+        seen = datetime.fromtimestamp(max(peer_seen or 0, peer_note.get("written", 0)))
+        age = (now - seen).total_seconds() / 60
         quiet = f", {age / 60:.1f} h ago: off or offline?" if age > PEER_QUIET_MIN else ""
-        head += f" ({peer}'s note from {written:%d %b %H:%M}{quiet})"
+        head += f" ({peer} last ran {seen:%d %b %H:%M}{quiet})"
     else:
         head += f" (no note from {peer} yet: is the sync installed there and Syncthing connected?)"
     lines = [head]

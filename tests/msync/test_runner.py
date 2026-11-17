@@ -16,8 +16,18 @@ class RunnerTest(TempDirCase):
         self.dt = self.desk.repo_path("Trend")
         self.lt = self.lap.repo_path("Trend")
 
-    def run_pc(self, cfg, **kw) -> str:
-        return run_once(cfg, now=datetime.now() + timedelta(minutes=5), procs=[], tasks=[], **kw)
+    def run_pc(self, cfg, now: datetime | None = None, **kw) -> str:
+        return run_once(cfg, now=now or datetime.now() + timedelta(minutes=5), procs=[], tasks=[], **kw)
+
+    def test_status_shows_when_peer_last_ran(self) -> None:
+        first = datetime.now() + timedelta(minutes=5)
+        later = first + timedelta(minutes=10)
+        self.run_pc(self.desk, now=first)
+        syncthing(self.desk, self.lap)
+        self.run_pc(self.lap, now=first)
+        self.run_pc(self.lap, now=later)  # nothing changed: only the alive file moves on
+        syncthing(self.lap, self.desk)
+        self.assertIn(f"laptop last ran {later:%d %b %H:%M}", self.run_pc(self.desk, now=later))
 
     def test_two_pc_round_trip(self) -> None:
         import time
