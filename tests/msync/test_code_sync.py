@@ -38,6 +38,15 @@ class CodeSyncTest(TempDirCase):
         self.assertEqual((s.branch, s.head, s.upstream), ("feature", head, "origin/feature"))
         self.assertTrue(r.moved)
 
+    def test_does_not_follow_older_activity(self) -> None:
+        self.push_feature()
+        note = self.lap_note()
+        time.sleep(1.1)
+        run(self.desk, "switch", "-c", "desk-branch")  # the desktop was worked on more recently
+        r = self.sync_desk(note)
+        self.assertEqual(read_repo(self.desk).branch, "desk-branch")
+        self.assertFalse(r.moved)
+
     def test_stays_when_working_here(self) -> None:
         self.push_feature()
         (self.desk / "README.md").write_text("desk edit\n")
