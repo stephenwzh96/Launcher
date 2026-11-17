@@ -99,9 +99,11 @@ def run_all_tasks():
 
 
 @app.post("/api/tasks/{task_id}/start")
-def start_task(task_id: str):
-    err = RUNNER.start(_get_task(task_id))
-    return {"ok": err is None, "errors": [err] if err else []}
+def start_task(task_id: str, take_over: bool = False):
+    """Starts a task. A daily task (tasks.yaml `claim`) another PC already started today is refused with
+    `claimed_by`; the page then offers to take over (take_over=true)."""
+    err = RUNNER.start(_get_task(task_id), take_over=take_over)
+    return {"ok": err is None, "errors": [err] if err else [], "claimed_by": RUNNER.refusals.get(task_id) if err else None}
 
 
 @app.post("/api/tasks/{task_id}/stop")

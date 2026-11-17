@@ -561,12 +561,19 @@ async function toggleLog(id) {
   else { openLogs.add(id); await loadLog(id); pre.scrollTop = pre.scrollHeight; }
 }
 
-async function startTask(id) {
+async function startTask(id, takeOver = false) {
   const t = tasksById[id];
-  if (t.done_today && !confirm(`${t.label} already finished today. Run it again?`)) return;
+  if (!takeOver && t.done_today && !confirm(`${t.label} already finished today. Run it again?`)) return;
   $(`#task-${id} .start`).disabled = true;
-  const data = await (await fetch(`/api/tasks/${id}/start`, { method: "POST" })).json();
-  if (!data.ok) alert(`Could not start ${t.label}:\n${data.errors.join("\n")}`);
+  const url = `/api/tasks/${id}/start${takeOver ? "?take_over=true" : ""}`;
+  const data = await (await fetch(url, { method: "POST" })).json();
+  if (!data.ok && data.claimed_by && !takeOver) {
+    // another PC started today's daily run: taking over is only for a run that ended or a PC that is off
+    const ask = `${data.errors.join("\n")}\n\nTake over today's run from ${data.claimed_by} and start ${t.label} `
+      + "on this PC? Only do this if that PC's run has ended or that PC is off: two runs on one day can "
+      + "send duplicate orders.";
+    if (confirm(ask)) return startTask(id, true);
+  } else if (!data.ok) alert(`Could not start ${t.label}:\n${data.errors.join("\n")}`);
   refreshTasks();
 }
 

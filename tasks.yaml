@@ -28,6 +28,7 @@
   expected_minutes: 47  # shown only while the run has no progress file
   progress_file: ../Trend/AIJPMT1A_build/data/logs/sod_progress.json
   timezone: Australia/Sydney
+  claim: daily  # one PC per day for the daily tasks: the first to start one claims the day on GitHub
   remind:
     at: ["11:00", "12:30"]
     record: ../Trend/AIJPMT1A_build/data/logs/sod_{t}.json
@@ -40,3 +41,4 @@
     First press - pre-open, books and the day's trade list, then Done while the list waits for your approval; the log ends with the list and its cycle id. Review it on the MTFA Execution card, approve it, then press Start again. Second press - it trades the day's windows and keeps running until the night's reconcile (about 08:20 Sydney), so leave the laptop on and plugged in. Failed = halted (the log and the execution dashboard say why) or the gateway could not be reached.
   cwd: ../IBKR
   cmd: ["../IBKR/.venv/Scripts/python.exe", "-m", "src.operations", "run", "--mode", "paper", "--envelopes", "../Trend/AIJPMT1A_build/live/targets"]
+  claim: daily  # runs on the PC that ran today's Start of Day (it reads that PC's envelopes)

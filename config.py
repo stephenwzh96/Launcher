@@ -72,6 +72,9 @@ class TaskConfig(BaseModel):
     progress_file: str | None = None
     timezone: str | None = None  # the clock of the task's times (ETA, deliver-by, reminders); default this machine's
     remind: RemindConfig | None = None
+    # optional: tasks sharing a claim name run on one PC per day; the launcher claims the day on GitHub before the
+    # first of them starts (machine_sync/claims.py) and refuses on the other PC
+    claim: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
     def resolved_cwd(self) -> Path:

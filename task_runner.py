@@ -21,7 +21,12 @@ from pathlib import Path
 import progress
 import reminder
 from config import TaskConfig
+from machine_sync import claims as day_claims
+from machine_sync.daily import read_claims, record_claim
 from process_control import pid_alive, send_ctrl_break
+
+HERE = Path(__file__).resolve().parent
+SYNC_DIR = Path(os.environ.get("USERPROFILE", r"C:\Users\User")) / "MachineSync"
 
 PROGRESS = re.compile(r"== (\d+)/(\d+) (.+)")
 TAIL_BYTES = 64_000
@@ -50,10 +55,18 @@ def _tail(path: Path, max_bytes: int = TAIL_BYTES) -> str:
         return ""
 
 
+def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool) -> day_claims.ClaimResult:
+    return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over)
+
+
 class TaskRunner:
-    def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S):
+    def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S,
+                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR):
         self.tasks = {t.id: t for t in tasks}
         self.stop_grace_s = stop_grace_s
+        self.claimer = claimer  # (task, day, machine, take_over) -> ClaimResult
+        self.sync_dir = Path(sync_dir)
+        self.refusals: dict[str, str] = {}  # task id -> the PC holding today's claim, after a refused start
         self.log_dir = log_dir / "tasks"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = log_dir / "tasks_state.json"
@@ -90,14 +103,52 @@ class TaskRunner:
         run["finished"] = datetime.now().isoformat(timespec="seconds")
         self._save()
 
+    # ----- the day's claim (one daily run per day across both PCs) -----
+    def _machine(self) -> str | None:
+        try:
+            return (self.sync_dir / "machine.txt").read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+
+    def _day(self, task: TaskConfig, now: datetime | None = None) -> str:
+        return (now or datetime.now(UTC)).astimezone(progress.zone(task.timezone)).strftime("%Y-%m-%d")
+
+    def _check_claim(self, task: TaskConfig, take_over: bool) -> str | None:
+        """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
+        machine = self._machine()
+        if not machine:
+            return (f"{task.label}: this PC has no sync tool installed ({self.sync_dir}\\machine.txt is missing), so "
+                    "it cannot check that the other PC has not started today's run; not started.")
+        day = self._day(task)
+        res = self.claimer(task, day, machine, take_over)
+        if res.ok:
+            record_claim(self.sync_dir, task.claim, day, machine, res.at or datetime.now().isoformat(timespec="seconds"))
+            return None
+        if res.holder:
+            self.refusals[task.id] = res.holder
+            record_claim(self.sync_dir, task.claim, day, res.holder, res.at or "")
+            when = f" at {res.at[11:16]}" if res.at and len(res.at) >= 16 else ""
+            return (f"{task.label} for {day} was already started on {res.holder}{when}. "
+                    "Use Take over only if that run has ended or that PC is off.")
+        return f"{task.label}: could not check GitHub for today's run ({res.error}); not started."
+
+    def _held_elsewhere(self, task: TaskConfig, now: datetime) -> bool:
+        day, machine = self._day(task, now), self._machine()
+        return any(c["claim"] == task.claim and c["day"] == day and c["holder"] != machine
+                   for c in read_claims(self.sync_dir))
+
     # ----- actions -----
-    def start(self, task_id: str) -> str | None:
-        """Starts the task unless it is already running. Returns an error message on failure, else None."""
+    def start(self, task_id: str, take_over: bool = False) -> str | None:
+        """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim.
+        Returns an error message on failure, else None."""
         task = self.tasks[task_id]
         with self.lock:
             self._settle(task_id)
+            self.refusals.pop(task_id, None)
             if self.runs.get(task_id, {}).get("state") == "running":
                 return f"{task.label} is already running"
+            if task.claim and (refused := self._check_claim(task, take_over)):
+                return refused
             now = datetime.now()
             log_path = self.log_dir / f"{task_id}_{now:%Y%m%d-%H%M%S}.log"
             env = {**os.environ, "PYTHONUNBUFFERED": "1", **task.env}
@@ -222,8 +273,8 @@ class TaskRunner:
         out = []
         with self.lock:
             for task_id, task in self.tasks.items():
-                if not task.remind:
-                    continue
+                if not task.remind or (task.claim and self._held_elsewhere(task, now)):
+                    continue  # the other PC runs today's daily tasks: no nagging here
                 self._settle(task_id)
                 running = self.runs.get(task_id, {}).get("state") == "running"
                 prog = progress.read(task.resolved_progress_file())

@@ -90,6 +90,13 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 - Each run writes `logs/tasks/<id>_<time>.log`; the last run of every task is kept in `logs/tasks_state.json`, so
   "done today" survives a launcher restart. A task left running when the launcher restarted is followed by its pid
   and shows "result unknown" when it ends.
+- **One PC per day** (`claim: daily`): MTFA Start of Day and the IBKR paper cycle run on one PC per day. Before the
+  first of them starts, the launcher claims the day on GitHub (`refs/daily-claims/daily/<date>` in this repo; only
+  the first claim is accepted). The PC holding the claim can re-run its tasks and press the cycle again; the other PC
+  is refused ("already started on laptop at 09:41") and offered **Take over**, only for a run that ended or a PC that
+  is off. GitHub unreachable or the sync tool not installed (`MachineSync\machine.txt`): not started. The reminder is
+  not shown on the PC that does not hold the day. See `machine_sync/` and
+  `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
 
 ## How it works
 
