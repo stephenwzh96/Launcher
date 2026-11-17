@@ -82,6 +82,51 @@ class RunnerTest(TempDirCase):
         self.assertTrue((tool / "run_sync.py").exists())
         self.assertEqual((self.desk.sync_dir / "machine.txt").read_text().strip(), "desktop")
 
+    def _launcher_pc(self):
+        """A desktop whose launcher repo's main holds the real machine_sync package, with the tool installed."""
+        import shutil
+        from pathlib import Path
+
+        from msync.helpers import clone, make_origin
+        from machine_sync.settings import Settings
+
+        origin = make_origin(self.tmp, "launcher")
+        seed = self.tmp / "seed" / "launcher"
+        shutil.copytree(Path(__file__).resolve().parents[2] / "machine_sync", seed / "machine_sync",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        run(seed, "add", ".")
+        run(seed, "commit", "-m", "tool")
+        run(seed, "push")
+        home = self.tmp / "pc"
+        clone(origin, home / "Marco" / "launcher")
+        cfg = Settings(home=home, machine="desktop", repos=("Marco/launcher",), plain_roots={})
+        install(cfg, register=False)
+        return cfg, seed
+
+    def test_self_update_installs_tested_main(self) -> None:
+        from machine_sync.selfupdate import self_update
+
+        cfg, seed = self._launcher_pc()
+        self.assertIsNone(self_update(cfg))  # same as main: nothing to do
+        settings_py = seed / "machine_sync" / "settings.py"
+        settings_py.write_text(settings_py.read_text() + "\nUPDATED = True\n")
+        run(seed, "commit", "-am", "update")
+        run(seed, "push")
+        run(cfg.repo_path("Marco/launcher"), "fetch")
+        self.assertIn("updated", self_update(cfg))
+        self.assertIn("UPDATED = True", (cfg.sync_dir / "tool" / "machine_sync" / "settings.py").read_text())
+
+    def test_self_update_keeps_tool_when_selftest_fails(self) -> None:
+        from machine_sync.selfupdate import self_update
+
+        cfg, seed = self._launcher_pc()
+        (seed / "machine_sync" / "status.py").write_text("this is not python(\n")
+        run(seed, "commit", "-am", "broken")
+        run(seed, "push")
+        run(cfg.repo_path("Marco/launcher"), "fetch")
+        self.assertIn("failed its self-test", self_update(cfg))
+        self.assertNotIn("not python", (cfg.sync_dir / "tool" / "machine_sync" / "status.py").read_text())
+
     def test_task_xml_has_all_triggers(self) -> None:
         xml = task_xml(r"C:\Py\pythonw.exe", r"C:\Users\User\MachineSync\tool\run_sync.py", "PC\\User")
         for needle in ("PT5M", "<LogonTrigger>", "SessionUnlock", "Power-Troubleshooter", "IgnoreNew",
