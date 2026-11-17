@@ -52,11 +52,22 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   cmd: ["MyProject/.venv/Scripts/python.exe", "MyProject/tools/my_task.py"]
   expected_minutes: 5       # optional, shown while it runs
   preview_cmd: ["MyProject/.venv/Scripts/python.exe", "plan.py"]  # optional: its last output line (what today's run will do) is shown under the task
+  progress_file: MyProject/logs/progress.json  # optional: see "Progress file" below
+  timezone: Australia/Sydney  # optional: the clock of the progress file's local times; default this machine's
   env: {}                   # optional extra environment variables
 ```
 
 - **Progress**: print a line containing `== k/n Title` before each of the task's n steps (a log timestamp in front
   is fine). Without such lines the row still shows running, done or failed.
+- **Progress file** (optional, `progress_file`): a JSON file the task rewrites at each step start, at least every
+  15 s while a step prints output, and at the end, in Trend's `sod_progress/1` schema (fields in
+  [`progress.py`](progress.py)). The row then shows step k of n, the time since the last output and the ETA (in
+  place of `expected_minutes`), and:
+  - **Stalled** (red): the file says running and its last output is over 10 minutes old.
+  - **Abandoned** (red): the file says running but its process (`pid`) is gone, killed or lost in a restart.
+  - A warning when the ETA is after the file's `deliver_by_local` (or the run is still going past it), and when
+    the machine is on battery.
+  A file is taken as this run's only if it started while this run was going, so yesterday's file is never shown.
 - **Result**: exit code 0 is Done, anything else Failed.
 - **Order**: put a task after the ones it needs; Run all never starts a task after a failure.
 - Each run writes `logs/tasks/<id>_<time>.log`; the last run of every task is kept in `logs/tasks_state.json`, so
@@ -65,11 +76,13 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 
 ## How it works
 
-- `config.py` — loads and validates `apps.yaml`.
+- `config.py` — loads and validates `apps.yaml` and `tasks.yaml`.
 - `process_control.py` — start/stop a process, check if it's up (TCP or
   HTTP), find a process by the port it's listening on.
 - `task_runner.py` — runs the Start of Day tasks: start, stop, Run all,
   progress from the log, last run per task.
+- `progress.py` — reads a task's progress file: step, last output, ETA, stalled
+  or abandoned.
 - `app.py` — thin FastAPI layer: `/api/apps`, `/api/status`,
   `/api/start/{id}`, `/api/stop/{id}`; `/api/tasks`, `/api/tasks/run-all`,
   `/api/tasks/{id}/start|stop|log`. Serves `static/index.html` at `/`.
@@ -79,3 +92,18 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 Stopping looks up *whatever process is currently listening on the configured
 port* rather than remembering what it started — so Stop still works even if
 you started something manually, or the launcher itself restarted.
+
+## Testing
+
+```powershell
+.venv\Scripts\python.exe -m unittest discover tests
+```
+
+To try the page against made-up tasks and progress files, point the launcher at
+another tasks file and logs folder, so the real task state is never touched:
+
+```powershell
+$env:LAUNCHER_TASKS = "$env:TEMP\launcher-test\tasks.yaml"
+$env:LAUNCHER_LOGS = "$env:TEMP\launcher-test\logs"
+.venv\Scripts\python.exe -m uvicorn app:app --port 9010
+```

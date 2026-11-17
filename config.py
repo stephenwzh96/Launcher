@@ -50,6 +50,10 @@ class TaskConfig(BaseModel):
     expected_minutes: int | None = None
     # optional: a quick command (same cwd) whose output line says what today's run will do; shown before Start
     preview_cmd: list[str] | None = None
+    # optional: a JSON file the task keeps current while it runs (schema sod_progress/1, progress.py); relative to
+    # Marco/ like cwd, or absolute
+    progress_file: str | None = None
+    timezone: str | None = None  # the clock of the task's times (ETA, deliver-by); default this machine's
     env: dict[str, str] = Field(default_factory=dict)
 
     def resolved_cwd(self) -> Path:
@@ -60,6 +64,9 @@ class TaskConfig(BaseModel):
 
     def resolved_preview_cmd(self) -> list[str] | None:
         return [_resolve(token) for token in self.preview_cmd] if self.preview_cmd else None
+
+    def resolved_progress_file(self) -> Path | None:
+        return (MARCO_DIR / self.progress_file).resolve() if self.progress_file else None
 
 
 def load_apps(path: Path) -> list[AppConfig]:

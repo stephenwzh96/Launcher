@@ -1,5 +1,9 @@
 """Local launcher: start/stop/status for the dashboards listed in apps.yaml, and the Start of Day tasks in
-tasks.yaml."""
+tasks.yaml.
+
+For a test, LAUNCHER_TASKS names another tasks file and LAUNCHER_LOGS another logs folder (both default to this
+folder's), so a trial run never touches the real task state."""
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -13,11 +17,11 @@ from process_control import is_up, start_process, stop_process
 from task_runner import TaskRunner
 
 HERE = Path(__file__).resolve().parent
-LOG_DIR = HERE / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR = Path(os.environ.get("LAUNCHER_LOGS") or HERE / "logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 APPS = {a.id: a for a in load_apps(HERE / "apps.yaml")}
-TASKS = load_tasks(HERE / "tasks.yaml")
+TASKS = load_tasks(Path(os.environ.get("LAUNCHER_TASKS") or HERE / "tasks.yaml"))
 RUNNER = TaskRunner(TASKS, LOG_DIR)
 
 for warning in check_paths(list(APPS.values()), TASKS):

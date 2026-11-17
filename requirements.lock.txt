@@ -16,6 +16,7 @@ pyyaml==6.0.2
 starlette==0.41.3
 typing-extensions==4.16.0
 typing-inspection==0.4.4
+tzdata==2026.5
 uvicorn==0.34.0
 watchfiles==1.2.0
 websockets==17.0.1

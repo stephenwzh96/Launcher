@@ -2,7 +2,8 @@
 
 Unlike apps, a task ends. Each run writes its own log (logs/tasks/<id>_<time>.log), and the last run of every task
 is kept in logs/tasks_state.json, so "done today" and the last result survive a launcher restart. Progress comes
-from the log: the latest line containing "== k/n Title".
+from the log: the latest line containing "== k/n Title"; a task with a progress file (tasks.yaml `progress_file`,
+progress.py) adds the time since its last output, its ETA, and whether it has stalled or been abandoned.
 """
 import json
 import os
@@ -10,18 +11,26 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import progress
 from config import TaskConfig
+from process_control import pid_alive
 
 PROGRESS = re.compile(r"== (\d+)/(\d+) (.+)")
 TAIL_BYTES = 64_000
+SLACK = timedelta(seconds=60)
 
 
-def _pid_alive(pid: int) -> bool:
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
-    return str(pid) in out
+def _aware(text: str) -> datetime:
+    """A time from tasks_state.json: naive local before started_utc was kept."""
+    out = datetime.fromisoformat(text)
+    return out if out.tzinfo else out.astimezone()
+
+
+def _run_start(run: dict) -> datetime:
+    return _aware(run.get("started_utc") or run["started"])
 
 
 def _tail(path: Path, max_bytes: int = TAIL_BYTES) -> str:
@@ -63,7 +72,7 @@ class TaskRunner:
                 return
             run.update(state="done" if code == 0 else "failed", exit_code=code)
             self.procs.pop(task_id)
-        elif _pid_alive(run["pid"]):
+        elif pid_alive(run["pid"], _run_start(run) + SLACK):
             return
         else:
             run.update(state="unknown")
@@ -97,6 +106,7 @@ class TaskRunner:
             self.runs[task_id] = {
                 "state": "running",
                 "started": now.isoformat(timespec="seconds"),
+                "started_utc": now.astimezone(UTC).isoformat(timespec="seconds"),
                 "finished": None,
                 "exit_code": None,
                 "pid": proc.pid,
@@ -161,7 +171,19 @@ class TaskRunner:
             return ""
         return "\n".join(_tail(self.log_dir / run["log"]).splitlines()[-lines:])
 
-    def status(self) -> dict:
+    def _progress(self, task: TaskConfig, run: dict, now: datetime) -> dict | None:
+        """The task's progress file, seen at `now`, when it is this run's: started while this run was going."""
+        p = progress.read(task.resolved_progress_file())
+        began = progress.when(p.get("started_utc")) if p else None
+        if began is None:
+            return None
+        end = _aware(run["finished"]) if run.get("finished") else now
+        if not _run_start(run) - SLACK <= began <= end:
+            return None
+        return progress.view(p, now, progress.zone(task.timezone))
+
+    def status(self, now: datetime | None = None) -> dict:
+        now = now or datetime.now(UTC)
         out = []
         with self.lock:
             for task_id, task in self.tasks.items():
@@ -183,13 +205,17 @@ class TaskRunner:
                     text = _tail(self.log_dir / run["log"])
                     steps = PROGRESS.findall(text)
                     lines = [ln for ln in text.splitlines() if ln.strip()]
+                    prog = self._progress(task, run, now)
                     item["run"] = {
                         **{k: run[k] for k in ("state", "started", "finished", "exit_code")},
                         "step": {"k": int(steps[-1][0]), "n": int(steps[-1][1]), "title": steps[-1][2].strip()}
                         if steps
                         else None,
                         "last_line": lines[-1][-300:] if lines else "",
+                        "progress": prog,
                     }
+                    if prog and prog["step"]:  # the file is newer than the log's last step line
+                        item["run"]["step"] = prog["step"]
                 out.append(item)
             running_all = bool(self.queue)
         return {"running_all": running_all, "tasks": out}

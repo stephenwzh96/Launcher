@@ -11,7 +11,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
   /* A desk timetable: the day's run as steps on a rail (hollow = to do, filled green = done today, a pulsing ring
-     while running, brick = failed), then the dashboards by group. Without the web fonts it falls back to Segoe UI. */
+     while running, a brick ring when stalled, brick = failed), then the dashboards by group. Without the web fonts
+     it falls back to Segoe UI. */
   :root {
     --paper: #EDF0EE;
     --surface: #F8FAF9;
@@ -25,6 +26,7 @@
     --amber: #94600F;
     --amber-halo: rgba(148, 96, 15, .35);
     --brick: #A23E2B;
+    --brick-halo: rgba(162, 62, 43, .35);
     --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
     --cond: "IBM Plex Sans Condensed", "Segoe UI", system-ui, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -43,6 +45,7 @@
       --amber: #E0A74A;
       --amber-halo: rgba(224, 167, 74, .35);
       --brick: #E07A62;
+      --brick-halo: rgba(224, 122, 98, .35);
     }
   }
 
@@ -120,11 +123,19 @@
     border-color: var(--amber); background: radial-gradient(circle, var(--amber) 0 2px, var(--paper) 2.5px);
     animation: pulse 1.8s ease-out infinite;
   }
-  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"]) .rail::before {
+  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"], [data-state="abandoned"]) .rail::before {
     background: var(--brick); border-color: var(--brick);
+  }
+  .step[data-state="stalled"] .rail::before {  /* still running, but silent too long */
+    border-color: var(--brick); background: radial-gradient(circle, var(--brick) 0 2px, var(--paper) 2.5px);
+    animation: pulse-brick 1.8s ease-out infinite;
   }
   @keyframes pulse {
     from { box-shadow: 0 0 0 0 var(--amber-halo); }
+    to { box-shadow: 0 0 0 8px transparent; }
+  }
+  @keyframes pulse-brick {
+    from { box-shadow: 0 0 0 0 var(--brick-halo); }
     to { box-shadow: 0 0 0 8px transparent; }
   }
 
@@ -133,14 +144,20 @@
   .state { margin-top: 1px; font: 500 14px/1.35 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
   .step[data-state="done"] .state { color: var(--green); }
   .step:is([data-state="running"], [data-state="queued"]) .state { color: var(--amber); }
-  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"]) .state { color: var(--brick); }
+  .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"], [data-state="stalled"], [data-state="abandoned"]) .state {
+    color: var(--brick);
+  }
+  .warn { margin-top: .25rem; font: 500 14px/1.35 var(--cond); color: var(--amber); }
+  .warn.late { color: var(--brick); }
   .summary, .desc, .preview { max-width: 66ch; margin-top: .375rem; }
   .desc { color: var(--muted); white-space: pre-line; }
   .preview { color: var(--amber); }
   .preview.fail { color: var(--brick); }
   .bar { height: 3px; margin-top: .625rem; background: var(--rule); border-radius: 2px; overflow: hidden; }
   .bar > span { display: block; width: 0; height: 100%; background: var(--amber); transition: width .4s; }
-  .step:is([data-state="failed"], [data-state="stopped"]) .bar > span { background: var(--brick); }
+  .step:is([data-state="failed"], [data-state="stopped"], [data-state="stalled"], [data-state="abandoned"]) .bar > span {
+    background: var(--brick);
+  }
   .last-line {
     margin-top: .375rem; font: 12px/1.4 var(--mono); color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -199,7 +216,7 @@
     .app .btn { height: auto; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .step[data-state="running"] .rail::before { animation: none; }
+    .step:is([data-state="running"], [data-state="stalled"]) .rail::before { animation: none; }
     .bar > span { transition: none; }
   }
 </style>
@@ -236,6 +253,7 @@
     <div class="body">
       <h3 class="name"></h3>
       <p class="state"></p>
+      <p class="warn" hidden></p>
       <p class="summary"><span class="summary-text"></span> <button type="button" class="btn inline details" aria-expanded="false">Details</button></p>
       <p class="desc" hidden></p>
       <p class="preview" hidden></p>
@@ -300,10 +318,15 @@ const lastState = {};
 let taskTimer = null;
 
 // The rail marker and the colour of the state line: a success from an earlier day is due again, so it is "todo".
+// With a progress file (tasks.yaml progress_file), a run can also be stalled (running, no output for over 10 min)
+// or abandoned (the file says running, but its process is gone).
 function stepState(t) {
   const r = t.run;
+  const p = r && r.progress;
   if (t.queued) return "queued";
   if (!r) return "todo";
+  if (p && p.abandoned) return "abandoned";
+  if (r.state === "running" && p && p.stalled) return "stalled";
   if (r.state === "done") return t.done_today ? "done" : "todo";
   return r.state;  // running, failed, stopped, unknown
 }
@@ -314,9 +337,18 @@ function stateText(t) {
   if (!r) return "Not run yet";
   const at = isToday(r.started) ? hhmm(r.started) : `${r.started.slice(0, 10)} ${hhmm(r.started)}`;
   const step = r.step ? `step ${r.step.k} of ${r.step.n}: ${r.step.title}` : "";
+  const p = r.progress;
+  const ran = minutes(r.started, new Date());
+  if (p && p.abandoned) return `Abandoned at ${step || "the start"}: its process is gone and left no result, ${at}`;
+  if (r.state === "running" && p) {  // the progress file's ETA replaces expected_minutes
+    if (p.stalled) return `Stalled: no output for ${p.idle_min} min, at ${step || "the start"} (${ran} min)`;
+    const eta = p.eta ? `, ETA ${p.eta}` : "";
+    const idle = p.idle_min === null ? "" : p.idle_min < 1 ? "; output just now" : `; last output ${p.idle_min} min ago`;
+    return `Running${step ? `, ${step}` : ""} (${ran} min${eta}${idle})`;
+  }
   if (r.state === "running") {
     const of = t.expected_minutes ? ` of about ${t.expected_minutes}` : "";
-    return `Running${step ? `, ${step}` : ""} (${minutes(r.started, new Date())} min${of})`;
+    return `Running${step ? `, ${step}` : ""} (${ran} min${of})`;
   }
   if (r.state === "done") {
     if (!t.done_today) return `Last done ${at}`;
@@ -327,6 +359,21 @@ function stateText(t) {
   if (r.state === "failed") return `Failed ${where}, ${at}`;
   if (r.state === "stopped") return `Stopped ${where}, ${at}`;
   return `Result unknown: the launcher restarted during the run, ${at}`;
+}
+
+// While it runs: a finish after the task's deliver-by time, and running on battery.
+function warnText(t) {
+  const r = t.run;
+  const p = r && r.progress;
+  if (!p || r.state !== "running" || p.abandoned) return "";
+  const out = [];
+  if (p.late) {
+    out.push(p.eta && p.eta > p.deliver_by
+      ? `ETA ${p.eta} is after the ${p.deliver_by} deliver-by`
+      : `Still running after the ${p.deliver_by} deliver-by`);
+  }
+  if (p.on_battery) out.push("On battery: plug in");
+  return out.length ? `${out.join(". ")}.` : "";
 }
 
 function barWidth(t) {
@@ -357,15 +404,19 @@ function renderTask(t) {
     if (t.has_preview) loadPreview(t.id);
   }
   const state = stepState(t);
-  const running = state === "running";
+  const running = Boolean(t.run && t.run.state === "running");  // stalled counts: it can still be stopped
   el.dataset.state = state;
   $(".when", el).textContent = t.when;
   $(".name", el).textContent = t.label;
   $(".state", el).textContent = stateText(t);
+  const warn = warnText(t);
+  $(".warn", el).textContent = warn;
+  $(".warn", el).hidden = !warn;
+  $(".warn", el).classList.toggle("late", Boolean(t.run && t.run.progress && t.run.progress.late));
   $(".summary-text", el).textContent = t.summary || t.description;
   $(".details", el).hidden = !(t.summary && t.description);  // no summary: the description is already shown
   $(".desc", el).textContent = t.description;
-  $(".bar", el).hidden = !["running", "failed", "stopped"].includes(state);
+  $(".bar", el).hidden = !["running", "failed", "stopped", "stalled", "abandoned"].includes(state);
   $(".bar > span", el).style.width = `${barWidth(t)}%`;
   const last = t.run && t.run.state !== "done" ? t.run.last_line || "" : "";
   $(".last-line", el).textContent = last;
