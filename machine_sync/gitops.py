@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 REFLOG_ACTION = "machine-sync"  # the tool's own Git moves carry this, so they never count as Stephen's activity
@@ -40,22 +41,43 @@ class RepoState:
     last_activity: float  # unix time of Stephen's last move or edit here (the tool's own moves excluded)
 
 
-def _uncommitted(repo: Path) -> list[str]:
-    raw = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
-    paths, entries = [], raw.split("\0")
+def _status(repo: Path) -> dict:
+    """One `git status --porcelain=v2 --branch` call: head, branch, upstream, ahead count, changed paths.
+    An upstream that is set but missing on the remote has no `branch.ab` line (gone)."""
+    raw = git(repo, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all").stdout
+    info: dict = {"head": "", "branch": None, "upstream": None, "ahead": None, "changed": []}
+    entries = raw.split("\0")
     i = 0
     while i < len(entries):
-        entry = entries[i]
-        if len(entry) > 3:
-            paths.append(entry[3:])
-            if entry[0] in "RC":  # a rename/copy is followed by its source path
-                i += 1
+        e = entries[i]
+        if e.startswith("# branch.oid "):
+            info["head"] = "" if e[13:] == "(initial)" else e[13:]
+        elif e.startswith("# branch.head "):
+            info["branch"] = None if e[14:] == "(detached)" else e[14:]
+        elif e.startswith("# branch.upstream "):
+            info["upstream"] = e[18:]
+        elif e.startswith("# branch.ab "):
+            info["ahead"] = int(e[12:].split()[0].lstrip("+"))
+        elif e.startswith("1 "):
+            info["changed"].append(e.split(" ", 8)[-1])
+        elif e.startswith("2 "):
+            info["changed"].append(e.split(" ", 9)[-1])
+            i += 1  # a rename is followed by its original path
+        elif e.startswith("u "):
+            info["changed"].append(e.split(" ", 10)[-1])
+        elif e.startswith("? "):
+            info["changed"].append(e[2:])
         i += 1
-    return paths
+    return info
+
+
+@lru_cache(maxsize=64)
+def _gitdir(repo: str) -> Path:
+    return Path(out(Path(repo), "rev-parse", "--absolute-git-dir"))
 
 
 def _operation(repo: Path) -> str | None:
-    gitdir = Path(out(repo, "rev-parse", "--absolute-git-dir"))
+    gitdir = _gitdir(str(repo))
     for marker, name in (("rebase-merge", "rebase"), ("rebase-apply", "rebase"), ("MERGE_HEAD", "merge"),
                          ("CHERRY_PICK_HEAD", "cherry-pick"), ("REVERT_HEAD", "revert"), ("BISECT_LOG", "bisect")):
         if (gitdir / marker).exists():
@@ -77,22 +99,18 @@ def _reflog_activity(repo: Path) -> float:
 
 
 def read_repo(repo: Path) -> RepoState:
-    branch = out(repo, "symbolic-ref", "--short", "-q", "HEAD") or None
-    head = out(repo, "rev-parse", "HEAD")
-    upstream, gone = None, False
-    if branch:
-        info = out(repo, "for-each-ref", "--format=%(upstream:short)%09%(upstream:track)", f"refs/heads/{branch}")
-        name, _, track = info.partition("\t")
-        upstream = name or None
-        gone = track.strip() == "[gone]"
+    """About three git calls: status (branch, upstream, ahead, changes), the upstream's commit, the reflog."""
+    st = _status(repo)
+    branch, head, upstream = st["branch"], st["head"], st["upstream"]
+    gone = bool(upstream) and st["ahead"] is None
     upstream_head = out(repo, "rev-parse", "--verify", "-q", f"refs/remotes/{upstream}") if upstream and not gone else ""
     if gone:
         unpushed = 0
     elif upstream:
-        unpushed = int(out(repo, "rev-list", "--count", f"{upstream}..HEAD") or 0)
+        unpushed = st["ahead"] or 0
     else:
         unpushed = int(out(repo, "rev-list", "--count", "HEAD", "--not", "--remotes") or 0)
-    changed = _uncommitted(repo)
+    changed = st["changed"]
     activity = _reflog_activity(repo)
     for rel in changed:
         try:
