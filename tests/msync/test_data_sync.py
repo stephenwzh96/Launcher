@@ -26,7 +26,7 @@ class DataSyncTest(TempDirCase):
 
     # ---- helpers
     def tick(self) -> float:
-        self.clock += 10
+        self.clock += 61  # runs are minutes apart on the real PCs
         return self.clock
 
     def path(self, cfg, rel: str) -> Path:
@@ -141,6 +141,7 @@ class DataSyncTest(TempDirCase):
     def test_deletion_propagates_with_backup(self) -> None:
         self.synced("data/gone.csv", "x")
         self.path(self.lap, "data/gone.csv").unlink()
+        self.pc_run(self.lap)  # missing once: could be a file being regenerated
         self.cycle(self.lap, self.desk)
         self.assertFalse(self.path(self.desk, "data/gone.csv").exists())
         self.assertEqual([b.read_text() for b in (self.desk.sync_dir / "backup").rglob("gone.csv")], ["x"])
@@ -152,6 +153,7 @@ class DataSyncTest(TempDirCase):
         self.assertEqual(len(list(self.path(self.desk, "data").glob("*.csv"))), 100)
         for i in range(60):
             self.path(self.lap, f"data/f{i:03}.csv").unlink()
+        self.pc_run(self.lap)
         self.pc_run(self.lap)
         self.exchange()
         res = self.pc_run(self.desk)
@@ -217,7 +219,7 @@ class DataSyncTest(TempDirCase):
         self.assertEqual(self.read(self.desk, "data/a.csv"), "1")
 
     def test_unstable_file_not_exported(self) -> None:
-        self.write(self.lap, "data/busy.csv", "half", age=0)  # modified 10 s before the next run
+        self.write(self.lap, "data/busy.csv", "half", age=-30)  # modified 31 s before the next run
         self.pc_run(self.lap)
         self.assertEqual(self.outbox_files(self.lap), [])
         self.clock += 100
@@ -240,6 +242,125 @@ class DataSyncTest(TempDirCase):
         self.pc_run(self.desk)
         self.assertEqual(self.path(self.desk, "data/x.db").read_bytes(), SQLITE + b"v1")
 
+    # ---- review fixes (final review of 17 Nov)
+    def test_clash_detected_when_winner_changed_twice(self) -> None:
+        self.synced("data/f.csv", "v1")
+        self.write(self.desk, "data/f.csv", "D")
+        self.pc_run(self.desk)  # the desktop's edit is recorded, then it sleeps before Syncthing sends it
+        self.write(self.lap, "data/f.csv", "L1")
+        self.pc_run(self.lap)
+        self.write(self.lap, "data/f.csv", "L2!")
+        self.pc_run(self.lap)
+        self.exchange()
+        res = self.pc_run(self.desk)
+        self.assertEqual(self.read(self.desk, "data/f.csv"), "L2!")
+        self.assertTrue(any("data/f.csv" in c for c in res.clashes), res.clashes)
+        self.assertEqual([b.read_text() for b in (self.desk.sync_dir / "backup").rglob("f.csv")], ["D"])
+
+    def test_no_false_clash_when_peer_edits_again_before_seeing_take(self) -> None:
+        self.synced("data/f.csv", "v1")
+        self.write(self.lap, "data/f.csv", "L1")
+        self.cycle(self.lap, self.desk)  # the desktop takes L1
+        self.write(self.lap, "data/f.csv", "L2!")
+        self.pc_run(self.lap)  # before it has seen the desktop's note
+        self.exchange()
+        res = self.pc_run(self.desk)
+        self.assertEqual(self.read(self.desk, "data/f.csv"), "L2!")
+        self.assertEqual(res.clashes, [])
+
+    def test_file_written_after_scan_is_not_replaced(self) -> None:
+        from machine_sync.data_sync import import_from_peer, scan
+
+        self.synced("data/f.csv", "v1")
+        self.write(self.lap, "data/f.csv", "L")
+        self.write(self.lap, "data/new.csv", "lap new")
+        self.pc_run(self.lap)
+        self.exchange()
+        state = load_state(self.desk)
+        now = self.tick()
+        scan(self.desk, state, now)
+        self.write(self.desk, "data/f.csv", "written after the scan", age=300)
+        self.write(self.desk, "data/new.csv", "made here after the scan", age=300)
+        res = import_from_peer(self.desk, state, read_note(self.desk, "laptop"), set(), False, now)
+        self.assertEqual(self.read(self.desk, "data/f.csv"), "written after the scan")
+        self.assertEqual(self.read(self.desk, "data/new.csv"), "made here after the scan")
+        self.assertEqual(res.taken, 0)
+
+    def test_locked_clash_target_leaves_no_backup_copies(self) -> None:
+        from msync.helpers import locked
+
+        self.synced("data/f.csv", "v1")
+        self.write(self.desk, "data/f.csv", "D")
+        self.pc_run(self.desk)
+        self.write(self.lap, "data/f.csv", "L")
+        self.pc_run(self.lap)
+        self.exchange()
+        with locked(self.path(self.desk, "data/f.csv"), share_read=True):
+            for _ in range(3):
+                self.pc_run(self.desk)
+        self.assertEqual(list((self.desk.sync_dir / "backup").rglob("f.csv*")), [])
+        self.assertEqual(list(self.path(self.desk, "data").glob("*.msync-tmp")), [])
+        self.pc_run(self.desk)
+        self.assertEqual(self.read(self.desk, "data/f.csv"), "L")
+        self.assertEqual([b.read_text() for b in (self.desk.sync_dir / "backup").rglob("f.csv")], ["D"])
+
+    def test_no_note_keeps_outbox(self) -> None:
+        self.write(self.lap, "data/big.csv", "big")
+        self.pc_run(self.lap)
+        self.assertEqual(self.outbox_files(self.lap), ["Trend/data/big.csv"])
+        self.lap.note_path("desktop").unlink()  # the desktop's note unreadable for a moment
+        self.pc_run(self.lap)
+        self.assertEqual(self.outbox_files(self.lap), ["Trend/data/big.csv"])
+
+    def test_unreadable_file_does_not_stop_run(self) -> None:
+        from msync.helpers import locked
+
+        self.write(self.lap, "data/a.csv", "a")
+        self.write(self.lap, "data/b.csv", "b")
+        with locked(self.path(self.lap, "data/a.csv")):
+            self.pc_run(self.lap)
+        self.assertEqual(self.outbox_files(self.lap), ["Trend/data/b.csv"])
+        self.pc_run(self.lap)
+        self.assertEqual(self.outbox_files(self.lap), ["Trend/data/a.csv", "Trend/data/b.csv"])
+
+    def test_note_paths_outside_data_are_refused(self) -> None:
+        import json
+
+        from machine_sync.data_files import hash_file
+
+        note = read_note(self.desk, "laptop")
+        for rel in ("../evil.txt", "Unknown/x.txt", "Trend/../../evil2.txt"):
+            staged = self.desk.peer_outbox / rel
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_text("payload")
+            note["files"][rel] = [hash_file(staged), self.clock + 999, "laptop", {"laptop": self.clock + 999}, False]
+        self.desk.note_path("laptop").write_text(json.dumps(note))
+        self.pc_run(self.desk)
+        self.assertFalse((self.desk.home.parent / "evil.txt").exists())
+        self.assertFalse((self.desk.home / "Unknown").exists())
+        self.assertFalse((self.tmp / "evil2.txt").exists())
+
+    def test_regenerated_file_is_not_a_deletion(self) -> None:
+        self.synced("data/panel.csv", "p")
+        self.path(self.lap, "data/panel.csv").unlink()  # a job rewriting its output folder
+        self.pc_run(self.lap)
+        self.exchange()
+        self.pc_run(self.desk)
+        self.assertTrue(self.path(self.desk, "data/panel.csv").exists())  # one missed run is not a deletion
+        self.write(self.lap, "data/panel.csv", "p")
+        self.cycle(self.lap, self.desk)
+        self.assertEqual(self.read(self.desk, "data/panel.csv"), "p")
+        self.assertFalse((self.desk.sync_dir / "backup").exists())
+
+    def test_no_deletions_recorded_while_daily_task_runs(self) -> None:
+        self.synced("data/out.csv", "o")
+        self.path(self.lap, "data/out.csv").unlink()
+        self.pc_run(self.lap, frozen={"Trend"})
+        self.pc_run(self.lap, frozen={"Trend"})
+        self.exchange()
+        self.pc_run(self.desk)
+        self.assertTrue(self.path(self.desk, "data/out.csv").exists())
+
     def test_excluded_files(self) -> None:
         for rel in ("data/ok.csv", "data/pg/PG_VERSION", "data/pg/base/1/2", "data/run.lock", "data/.env",
                     "data/node_modules/x.js", "data/logs/a.txt", "data/x.db-wal", "data/a.sync-conflict-1.csv"):
@@ -249,6 +370,7 @@ class DataSyncTest(TempDirCase):
     def test_reappearing_path_after_tombstone_is_new_change(self) -> None:
         self.synced("data/r.csv", "old")
         self.path(self.lap, "data/r.csv").unlink()
+        self.pc_run(self.lap)
         self.cycle(self.lap, self.desk)
         self.assertFalse(self.path(self.desk, "data/r.csv").exists())
         self.write(self.desk, "data/r.csv", "restored", age=10 ** 6)  # an old copy put back

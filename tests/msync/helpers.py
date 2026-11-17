@@ -85,6 +85,26 @@ def syncthing(src: Settings, dst: Settings) -> None:
         shutil.copytree(source, target)
 
 
+class locked:
+    """Hold a file open with no sharing (as an app holding it open would on Windows)."""
+
+    def __init__(self, path: Path, share_read: bool = False) -> None:
+        """share_read: others may read (most apps holding a file open), but not delete, rename or write it."""
+        import ctypes
+
+        self.k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.k32.CreateFileW.restype = ctypes.c_void_p
+        self.handle = self.k32.CreateFileW(str(path), 0x80000000, 1 if share_read else 0, None, 3, 0x80, None)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        import ctypes
+
+        self.k32.CloseHandle(ctypes.c_void_p(self.handle))
+
+
 def _force(func, path, _exc) -> None:
     os.chmod(path, stat.S_IWRITE)
     func(path)

@@ -44,8 +44,13 @@ def load_state(cfg: Settings) -> dict:
         state = json.loads((cfg.sync_dir / "state.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         state = {}
-    for key, empty in (("files", {}), ("outbox", {}), ("clashes", []), ("unstable", [])):
+    for key, empty in (("files", {}), ("outbox", {}), ("clashes", []), ("unstable", []), ("missing", {}),
+                       ("errors", [])):
         state.setdefault(key, empty)
+    for e in state["files"].values():  # state written before version vectors
+        if "vv" not in e:
+            e["vv"] = {e["m"]: e["t"]}
+            e.pop("b", None)
     return state
 
 
@@ -61,7 +66,7 @@ def read_note(cfg: Settings, machine: str) -> dict | None:
 
 
 def make_note(cfg: Settings, state: dict, now: float, extra: dict | None = None) -> dict:
-    files = {rel: [e["h"], e["t"], e["m"], e["b"], e["del"]] for rel, e in state["files"].items()}
+    files = {rel: [e["h"], e["t"], e["m"], e["vv"], e["del"]] for rel, e in state["files"].items()}
     return {"format": NOTE_FORMAT, "machine": cfg.machine, "written": now, "files": files,
             "clashes": state["clashes"], **(extra or {})}
 
@@ -92,7 +97,22 @@ def _key(v: dict) -> tuple[float, str]:
 
 
 def _version(raw: list) -> dict:
-    return {"h": raw[0], "t": raw[1], "m": raw[2], "b": raw[3], "del": bool(raw[4])}
+    """A note entry [hash, stamp, machine, version vector, deleted]. The vector holds, per PC, the stamp of the
+    latest change made on that PC which this version includes: a clash is a change of ours the other side never saw."""
+    vv = raw[3] if isinstance(raw[3], dict) else {raw[2]: raw[1]}
+    return {"h": raw[0], "t": raw[1], "m": raw[2], "vv": vv, "del": bool(raw[4])}
+
+
+def _merge(a: dict, b: dict) -> dict:
+    return {k: max(a.get(k, 0.0), b.get(k, 0.0)) for k in {*a, *b}}
+
+
+def _safe_rel(cfg: Settings, rel: str) -> bool:
+    """A note path this PC may write: relative, no '..', inside one of the repos or plain folders."""
+    parts = rel.split("/")
+    if not rel or rel.startswith("/") or ":" in rel or "\\" in rel or any(p in ("", ".", "..") for p in parts):
+        return False
+    return _root_of(cfg, rel) is not None
 
 
 def _repo_of(cfg: Settings, rel: str) -> str | None:
@@ -111,26 +131,34 @@ def _root_of(cfg: Settings, rel: str) -> Path | None:
 
 
 # ----------------------------------------------------------------- scan this PC
-def scan(cfg: Settings, state: dict, now: float) -> dict:
+def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozenset()) -> dict:
+    """Record this PC's changes. A file still being written (changed in the last STABLE_S seconds) or unreadable is
+    left for a later run. A file is deleted only when it has been missing on two runs at least STABLE_S apart (a
+    job rewriting its output folder is not a deletion), and never in a repo a daily task is using right now."""
     files = data_files(cfg)
-    entries, unstable = state["files"], []
+    entries, unstable, errors, missing = state["files"], [], [], state["missing"]
     for rel, path in files.items():
+        missing.pop(rel, None)
         try:
             st = path.stat()
-        except OSError:
-            continue
-        e = entries.get(rel)
-        if e and not e["del"] and e["size"] == st.st_size and e["mt"] == st.st_mtime_ns:
-            continue
-        if now - st.st_mtime < STABLE_S:
+            e = entries.get(rel)
+            if e and not e["del"] and e["size"] == st.st_size and e["mt"] == st.st_mtime_ns:
+                continue
+            if now - st.st_mtime < STABLE_S:
+                unstable.append(rel)
+                continue
+            h = hash_file(path)
+        except OSError as err:  # locked or vanished: try again next run, never treat as a change
             unstable.append(rel)
+            errors.append(f"{rel}: could not read ({err.strerror or err})")
             continue
-        h = hash_file(path)
         if e and not e["del"] and e["h"] == h:
             e["size"], e["mt"] = st.st_size, st.st_mtime_ns
             continue
         stamp = min(st.st_mtime, now) if e is None else now  # first sight: its own time; any later change: now
-        entries[rel] = {"h": h, "t": stamp, "m": cfg.machine, "b": e["t"] if e else None, "del": False,
+        vv = dict(e["vv"]) if e else {}
+        vv[cfg.machine] = stamp
+        entries[rel] = {"h": h, "t": stamp, "m": cfg.machine, "vv": vv, "del": False,
                         "size": st.st_size, "mt": st.st_mtime_ns}
     for rel, e in list(entries.items()):
         if e["del"]:
@@ -140,13 +168,22 @@ def scan(cfg: Settings, state: dict, now: float) -> dict:
         if rel in files:
             continue
         root = _root_of(cfg, rel)
-        if root is None or not root.exists():
-            continue  # a whole repo or folder missing is never read as deletions
+        if root is None or not root.exists() or _repo_of(cfg, rel) in frozen_repos:
+            continue  # a whole repo or folder missing, or a repo in use by a daily task: never deletions
         if (cfg.home / rel).exists():
             del entries[rel]  # still here but no longer data (now tracked or excluded)
+            missing.pop(rel, None)
             continue
-        entries[rel] = {"h": None, "t": now, "m": cfg.machine, "b": e["t"], "del": True, "size": 0, "mt": 0}
-    state["unstable"] = unstable
+        first = missing.setdefault(rel, now)
+        if now - first < STABLE_S or first == now:
+            continue
+        missing.pop(rel)
+        vv = dict(e["vv"])
+        vv[cfg.machine] = now
+        entries[rel] = {"h": None, "t": now, "m": cfg.machine, "vv": vv, "del": True, "size": 0, "mt": 0}
+    for rel in [r for r in missing if r not in entries or entries[r]["del"]]:
+        missing.pop(rel)
+    state["unstable"], state["errors"] = unstable, errors
     return state
 
 
@@ -173,22 +210,54 @@ def _ignored_here(cfg: Settings, rels: list[str]) -> set[str]:
 def _copy_atomic(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_name(dst.name + ".msync-tmp")
-    shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
+    try:
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
-def _backup(cfg: Settings, rel: str, now: float, move: bool) -> Path:
+def _backup_path(cfg: Settings, rel: str, now: float) -> Path:
     day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
     target = cfg.sync_dir / "backup" / day / rel
     if target.exists():
         target = target.with_name(f"{target.stem}.{datetime.fromtimestamp(now):%H%M%S}{target.suffix}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    src = cfg.home / rel
-    if move:
-        shutil.move(src, target)
-    else:
-        shutil.copy2(src, target)
     return target
+
+
+def _replace(cfg: Settings, rel: str, staged: Path | None, now: float, keep_old: bool) -> Path | None:
+    """Put `staged` at rel (or delete rel when staged is None). keep_old: first move the current file into the
+    backup folder by renaming it (same disk), so a file held open fails cleanly and leaves no copy behind; on any
+    failure the old file is put back. Returns the backup's path, if one was kept."""
+    dst = cfg.home / rel
+    tmp = dst.with_name(dst.name + ".msync-tmp")
+    backup = None
+    try:
+        if staged is not None:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(staged, tmp)
+        if dst.exists() and (keep_old or staged is None):
+            backup = _backup_path(cfg, rel, now)
+            os.replace(dst, backup)
+        if staged is not None:
+            os.replace(tmp, dst)
+    except OSError:
+        if backup is not None and backup.exists() and not dst.exists():
+            os.replace(backup, dst)
+        tmp.unlink(missing_ok=True)
+        raise
+    return backup
+
+
+def _changed_since_scan(cfg: Settings, rel: str, e: dict | None) -> bool:
+    """The file was written after this run's scan (or appeared, or reappeared): never replace it on old facts."""
+    try:
+        st = (cfg.home / rel).stat()
+    except OSError:
+        return e is not None and not e["del"]  # the scan saw it; now it is gone
+    return e is None or e["del"] or st.st_size != e["size"] or st.st_mtime_ns != e["mt"]
 
 
 def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_repos: set[str],
@@ -197,10 +266,14 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     entries, unstable = state["files"], set(state["unstable"])
     candidates = []
     for rel, raw in ((peer_note or {}).get("files") or {}).items():
+        if not _safe_rel(cfg, rel):
+            res.skipped.append(f"{rel!r}: not inside a synced folder on this PC, ignored")
+            continue
         p, e = _version(raw), entries.get(rel)
         if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
-            if _key(p) > _key(e):  # same content: both keep the later stamp
-                e.update(t=p["t"], m=p["m"], b=p["b"])
+            e["vv"] = _merge(e["vv"], p["vv"])  # same content: one version, both PCs' changes included
+            if _key(p) > _key(e):
+                e.update(t=p["t"], m=p["m"])
             continue
         if (e is None and p["del"]) or (e is not None and _key(e) >= _key(p)):
             continue
@@ -218,7 +291,8 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
         if repo and rel not in allowed:
             res.skipped.append(f"{rel}: tracked by Git on this PC, left to Git")
             continue
-        clash = e is not None and not e["del"] and (p["b"] is None or e["t"] > p["b"])
+        # a clash: this PC's copy holds a change of its own that the incoming version was not made from
+        clash = e is not None and not e["del"] and e["vv"].get(cfg.machine, 0.0) > p["vv"].get(cfg.machine, 0.0)
         if p["del"]:
             deletes.append((rel, p, clash))
             continue
@@ -238,28 +312,30 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     if len(deletes) > max(BRAKE_MIN, BRAKE_FRACTION * live) and not allow_deletes:
         res.held_deletes, deletes = len(deletes), []
     for rel, p, clash, staged in takes:
-        dst = cfg.home / rel
-        try:
-            backup = _backup(cfg, rel, now, move=False) if clash and dst.exists() else None
-            _copy_atomic(staged, dst)
-        except OSError as err:
-            res.skipped.append(f"{rel}: could not write ({err.strerror or err})")
+        if _changed_since_scan(cfg, rel, entries.get(rel)):
+            res.skipped.append(f"{rel}: changed on this PC during this run, next run decides")
             continue
-        st = dst.stat()
-        entries[rel] = {**p, "size": st.st_size, "mt": st.st_mtime_ns}
+        try:
+            backup = _replace(cfg, rel, staged, now, keep_old=clash)
+        except OSError as err:
+            res.skipped.append(f"{rel}: could not write, in use? ({err.strerror or err})")
+            continue
+        st = (cfg.home / rel).stat()
+        entries[rel] = {"h": p["h"], "t": p["t"], "m": p["m"], "vv": dict(p["vv"]), "del": False,
+                        "size": st.st_size, "mt": st.st_mtime_ns}
         res.taken += 1
         if clash:
             _record_clash(state, res, rel, p, backup, now)
     for rel, p, clash in deletes:
-        dst = cfg.home / rel
-        backup = None
-        try:
-            if dst.exists():
-                backup = _backup(cfg, rel, now, move=True)
-        except OSError as err:
-            res.skipped.append(f"{rel}: could not delete ({err.strerror or err})")
+        if _changed_since_scan(cfg, rel, entries.get(rel)):
+            res.skipped.append(f"{rel}: changed on this PC during this run, next run decides")
             continue
-        entries[rel] = {**p, "h": None, "size": 0, "mt": 0}
+        try:
+            backup = _replace(cfg, rel, None, now, keep_old=True)
+        except OSError as err:
+            res.skipped.append(f"{rel}: could not delete, in use? ({err.strerror or err})")
+            continue
+        entries[rel] = {"h": None, "t": p["t"], "m": p["m"], "vv": dict(p["vv"]), "del": True, "size": 0, "mt": 0}
         res.deleted += 1
         if clash:
             _record_clash(state, res, rel, p, backup, now)
@@ -285,12 +361,15 @@ def _outbox_files(root: Path):
 
 
 def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
-    """Keep exactly the files the other PC lacks and that are newer here; remove the rest. With no note from the
-    other PC nothing is sent: it may already have every file (the first run would otherwise copy all the data)."""
-    peer_files = (peer_note or {}).get("files") or {}
+    """Keep exactly the files the other PC lacks and that are newer here; remove the rest. With no readable note
+    from the other PC the outbox is left as it is: nothing new is sent (it may already have every file) and nothing
+    already on its way is thrown away."""
+    if peer_note is None:
+        return 0
+    peer_files = peer_note.get("files") or {}
     unstable = set(state["unstable"])
     wanted: dict[str, dict] = {}
-    for rel, e in (state["files"].items() if peer_note else ()):
+    for rel, e in state["files"].items():
         if e["del"] or rel in unstable:
             continue
         raw = peer_files.get(rel)
@@ -351,8 +430,9 @@ def sync_data(cfg: Settings, state: dict, peer_note: dict | None, now: float, fr
               allow_deletes: bool = False, note_extra: dict | None = None) -> ImportResult:
     """Scan, import the other PC's newer versions, refresh this PC's outbox, then write the note (files first, then
     the note that names them) and the state."""
-    scan(cfg, state, now)
+    scan(cfg, state, now, set(frozen_repos))
     res = import_from_peer(cfg, state, peer_note, set(frozen_repos), allow_deletes, now)
+    res.skipped = [*state["errors"], *res.skipped]
     res.exported = refresh_outbox(cfg, state, peer_note)
     _prune(cfg, state, now)
     note = make_note(cfg, state, now, note_extra)
