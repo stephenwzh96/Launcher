@@ -412,6 +412,49 @@ def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
     return written
 
 
+# ----------------------------------------------------------------- one-off: deletions made before the sync existed
+def adopt_peer_deletions(cfg: Settings, state: dict, peer_note: dict, baseline: set[str], now: float,
+                         apply: bool) -> list[str]:
+    """Files this PC has that were in the shared starting point (`baseline`: the trip's 28 Oct data zip and what the
+    trip sync copied over) but that the other PC no longer has: the other PC deleted them before this tool recorded
+    deletions. With apply, each is moved to the backup folder and recorded as deleted by the other PC, so neither
+    PC brings it back. Returns the paths (all of them on a dry run)."""
+    peer_files = peer_note.get("files") or {}
+    paths = sorted(rel for rel, e in state["files"].items()
+                   if not e["del"] and rel not in peer_files and rel in baseline)
+    if not apply:
+        return paths
+    done = []
+    for rel in paths:
+        try:
+            _replace(cfg, rel, None, now, keep_old=True)
+        except OSError:
+            continue
+        state["files"][rel] = {"h": None, "t": now, "m": cfg.peer, "vv": {cfg.peer: now}, "del": True,
+                               "size": 0, "mt": 0}
+        done.append(rel)
+    save_state(cfg, state)
+    return done
+
+
+def trip_baseline(cfg: Settings) -> set[str]:
+    """The data both PCs had in common before this tool: the 28 Oct fingerprint list and the trip sync's imports."""
+    import csv
+
+    paths: set[str] = set()
+    for f in (cfg.home / "trip_transfer" / "data_fingerprints.csv",
+              cfg.home / "Downloads" / "trip_transfer" / "data_fingerprints.csv"):
+        if f.exists():
+            with f.open(encoding="utf-8") as fh:
+                paths |= {r["path_under_C_Users_User"].replace("\\", "/") for r in csv.DictReader(fh)}
+            break
+    try:
+        paths |= set(json.loads((cfg.home / "TripSync_logs" / "imported.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+    return paths
+
+
 # ----------------------------------------------------------------- one data run
 def _prune(cfg: Settings, state: dict, now: float) -> None:
     state["clashes"] = [c for c in state["clashes"] if now - c["when"] < CLASH_KEEP_DAYS * 86400]

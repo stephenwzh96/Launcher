@@ -361,6 +361,29 @@ class DataSyncTest(TempDirCase):
         self.pc_run(self.desk)
         self.assertTrue(self.path(self.desk, "data/out.csv").exists())
 
+    def test_adopt_peer_deletions_from_shared_baseline(self) -> None:
+        from machine_sync.data_sync import adopt_peer_deletions
+
+        self.write(self.desk, "data/old_cache.json", "deleted on the laptop during the trip")
+        self.write(self.desk, "data/made_here.txt", "new on the desktop, never on the laptop")
+        self.pc_run(self.desk)
+        state = load_state(self.desk)
+        plan = adopt_peer_deletions(self.desk, state, read_note(self.desk, "laptop"),
+                                    baseline={"Trend/data/old_cache.json"}, now=self.tick(), apply=False)
+        self.assertEqual(plan, ["Trend/data/old_cache.json"])
+        self.assertTrue(self.path(self.desk, "data/old_cache.json").exists())  # dry run changes nothing
+        adopt_peer_deletions(self.desk, state, read_note(self.desk, "laptop"),
+                             baseline={"Trend/data/old_cache.json"}, now=self.tick(), apply=True)
+        self.assertFalse(self.path(self.desk, "data/old_cache.json").exists())
+        self.assertTrue(self.path(self.desk, "data/made_here.txt").exists())
+        self.assertEqual([b.read_text() for b in (self.desk.sync_dir / "backup").rglob("old_cache.json")],
+                         ["deleted on the laptop during the trip"])
+        self.pc_run(self.desk)
+        self.exchange()
+        self.pc_run(self.lap)
+        self.assertFalse(self.path(self.lap, "data/old_cache.json").exists())  # never resurrected
+        self.assertTrue(self.path(self.lap, "data/made_here.txt").exists())
+
     def test_excluded_files(self) -> None:
         for rel in ("data/ok.csv", "data/pg/PG_VERSION", "data/pg/base/1/2", "data/run.lock", "data/.env",
                     "data/node_modules/x.js", "data/logs/a.txt", "data/x.db-wal", "data/a.sync-conflict-1.csv"):

@@ -31,6 +31,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--update-frozen", action="store_true", help="update code kept for today's daily run")
     sub.add_parser("status", help="print the last status")
     sub.add_parser("selftest")
+    adopt = sub.add_parser("adopt-deletions", help="one-off: delete here (to backup) the shared files the other PC "
+                                                   "deleted before this tool existed; dry run without --apply")
+    adopt.add_argument("--apply", action="store_true")
     ins = sub.add_parser("install", help="install on this PC and register the task")
     ins.add_argument("--machine", required=True, choices=MACHINES)
     ins.add_argument("--no-register", action="store_true")
@@ -44,6 +47,28 @@ def main(argv: list[str] | None = None) -> int:
             _say(line)
         return 0
     cfg = Settings.real()
+    if a.cmd == "adopt-deletions":
+        import time
+        from collections import Counter
+
+        from . import runlock
+        from .data_sync import adopt_peer_deletions, load_state, read_note, trip_baseline
+
+        peer_note = read_note(cfg, cfg.peer)
+        if peer_note is None:
+            _say(f"no note from the {cfg.peer} yet: nothing to compare")
+            return 1
+        if not runlock.acquire(cfg.sync_dir, wait_s=120):
+            _say("a sync run is in progress; try again in a minute")
+            return 1
+        try:
+            paths = adopt_peer_deletions(cfg, load_state(cfg), peer_note, trip_baseline(cfg), time.time(), a.apply)
+        finally:
+            runlock.release(cfg.sync_dir)
+        for folder, n in Counter("/".join(p.split("/")[:4]) for p in paths).most_common():
+            _say(f"{n:5}  {folder}")
+        _say(f"{len(paths)} files {'moved to ' + str(cfg.sync_dir / 'backup') if a.apply else 'would be moved (dry run)'}")
+        return 0
     if a.cmd == "status":
         _say((cfg.sync_dir / "sync_status.txt").read_text(encoding="utf-8"))
         return 0
