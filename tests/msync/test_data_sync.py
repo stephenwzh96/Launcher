@@ -14,6 +14,15 @@ class DataSyncTest(TempDirCase):
         super().setUp()
         self.desk, self.lap = two_pcs(self.tmp, ("Trend",))
         self.clock = time.time() + 1000  # every real file is "stable" (older than 60 s) at these times
+        if self._testMethodName not in ("test_nothing_sent_before_other_pcs_note", "test_bootstrap_keeps_newer_mtime"):
+            self.handshake()
+
+    def handshake(self) -> None:
+        """Both PCs run once, so each has the other's note (as after the first runs on real PCs)."""
+        self.pc_run(self.desk)
+        self.exchange()
+        self.pc_run(self.lap)
+        self.exchange()
 
     # ---- helpers
     def tick(self) -> float:
@@ -66,6 +75,11 @@ class DataSyncTest(TempDirCase):
         self.write(self.lap, "data/a.csv", "1")
         self.cycle(self.lap, self.desk)
         self.assertEqual(self.read(self.desk, "data/a.csv"), "1")
+
+    def test_nothing_sent_before_other_pcs_note(self) -> None:
+        self.write(self.lap, "data/a.csv", "1")
+        self.pc_run(self.lap)  # no note from the desktop yet: it may already have every file
+        self.assertEqual(self.outbox_files(self.lap), [])
 
     def test_change_reaches_other_pc(self) -> None:
         self.synced("data/a.csv", "1")
@@ -142,7 +156,9 @@ class DataSyncTest(TempDirCase):
         self.exchange()
         self.pc_run(self.lap)
         self.exchange()
-        self.pc_run(self.desk)
+        self.pc_run(self.desk)  # now it knows the laptop lacks its copy: sends it
+        self.exchange()
+        self.pc_run(self.lap)
         self.assertEqual(self.read(self.desk, "data/b.csv"), "desk")
         self.assertEqual(self.read(self.lap, "data/b.csv"), "desk")
 

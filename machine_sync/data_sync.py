@@ -268,11 +268,12 @@ def _outbox_files(root: Path):
 
 
 def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
-    """Keep exactly the files the other PC lacks and that are newer here; remove the rest."""
+    """Keep exactly the files the other PC lacks and that are newer here; remove the rest. With no note from the
+    other PC nothing is sent: it may already have every file (the first run would otherwise copy all the data)."""
     peer_files = (peer_note or {}).get("files") or {}
     unstable = set(state["unstable"])
     wanted: dict[str, dict] = {}
-    for rel, e in state["files"].items():
+    for rel, e in (state["files"].items() if peer_note else ()):
         if e["del"] or rel in unstable:
             continue
         raw = peer_files.get(rel)
