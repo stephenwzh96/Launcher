@@ -43,6 +43,13 @@ class DailyTest(TempDirCase):
         self.assertTrue(code_frozen(self.cfg, datetime(2026, 11, 18, 8, 59)))
         self.assertFalse(code_frozen(self.cfg, datetime(2026, 11, 18, 9, 0)))
 
+    def test_only_daily_task_claims_freeze_code(self) -> None:
+        record_claim(self.cfg.sync_dir, "e2e-test", "2026-11-17", "desktop", "2026-11-17T09:41:00")
+        self.assertFalse(code_frozen(self.cfg, datetime(2026, 11, 17, 23, 0), names={"daily"}))
+        self.assertFalse(holds_claim_today(self.cfg, datetime(2026, 11, 17, 23, 0), names={"daily"}))
+        record_claim(self.cfg.sync_dir, "daily", "2026-11-17", "desktop", "2026-11-17T09:41:00")
+        self.assertTrue(code_frozen(self.cfg, datetime(2026, 11, 17, 23, 0), names={"daily"}))
+
     def test_not_frozen_when_other_pc_holds_claim(self) -> None:
         record_claim(self.cfg.sync_dir, "daily", "2026-11-17", "laptop", "2026-11-17T09:41:00")
         self.assertFalse(code_frozen(self.cfg, datetime(2026, 11, 17, 23, 0)))

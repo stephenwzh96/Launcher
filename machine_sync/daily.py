@@ -122,15 +122,21 @@ def record_claim(sync_dir: Path, claim: str, day: str, holder: str, at: str) -> 
     os.replace(tmp, sync_dir / CLAIM_FILE)
 
 
-def holds_claim_today(cfg: Settings, now: datetime) -> bool:
-    today = now.strftime("%Y-%m-%d")
-    return any(c["day"] == today and c["holder"] == cfg.machine for c in read_claims(cfg.sync_dir))
+DEFAULT_CLAIMS = {"daily"}  # when tasks.yaml cannot be read, still honour the daily tasks' claim
 
 
-def code_frozen(cfg: Settings, now: datetime) -> bool:
-    """This PC holds a claim, and `now` is between that claim and 09:00 the day after its day."""
+def holds_claim_today(cfg: Settings, now: datetime, names: set[str] | None = None) -> bool:
+    today, names = now.strftime("%Y-%m-%d"), names or DEFAULT_CLAIMS
+    return any(c["day"] == today and c["holder"] == cfg.machine and c["claim"] in names
+               for c in read_claims(cfg.sync_dir))
+
+
+def code_frozen(cfg: Settings, now: datetime, names: set[str] | None = None) -> bool:
+    """This PC holds a daily-task claim (`names`), and `now` is between that claim and 09:00 the day after its day.
+    Other claim names (tests) never freeze code."""
+    names = names or DEFAULT_CLAIMS
     for c in read_claims(cfg.sync_dir):
-        if c["holder"] != cfg.machine:
+        if c["holder"] != cfg.machine or c["claim"] not in names:
             continue
         try:
             start = datetime.fromisoformat(c["at"])

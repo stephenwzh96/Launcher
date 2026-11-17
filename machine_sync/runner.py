@@ -109,7 +109,8 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
         _refresh_claims(cfg, tasks, now)
     except OSError as err:
         warnings.append(f"could not read today's claim from GitHub ({err})")
-    frozen = code_frozen(cfg, now) and not update_frozen
+    names = {t["claim"] for t in tasks if t.get("claim")} or None
+    frozen = code_frozen(cfg, now, names) and not update_frozen
     peer_repos = (peer_note or {}).get("repos") or {}
 
     def one(repo: str) -> RepoResult:

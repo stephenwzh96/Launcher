@@ -64,7 +64,7 @@ def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = Fals
     pushed = git(repo, "push", "--porcelain", "origin", f"{'+' if take_over else ''}{commit.stdout.strip()}:{ref}")
     if pushed.returncode == 0:
         git(repo, "update-ref", ref, commit.stdout.strip())
-        prune(repo, today=date.fromisoformat(day))
+        prune(repo)  # from today's date, never the claim's day: a stray future day must not delete live claims
         return ClaimResult(True, holder=machine, at=at)
     said = (pushed.stdout + pushed.stderr).lower()
     if not any(word in said for word in _REJECTED):

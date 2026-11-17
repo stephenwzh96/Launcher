@@ -54,6 +54,12 @@ class ClaimsTest(TempDirCase):
         self.assertIsNone(r.holder)
         self.assertTrue(r.error)
 
+    def test_claim_for_another_day_never_prunes_todays(self) -> None:
+        today = date.today().isoformat()
+        claim(self.desk, "daily", today, "laptop")
+        claim(self.desk, "other", "2099-01-01", "desktop")  # a stray far-future day (a wrong clock, a test)
+        self.assertEqual(holder(self.lap, "daily", today).holder, "laptop")
+
     def test_prune_old_claims(self) -> None:
         claim(self.desk, "daily", "2026-09-01", "desktop")
         claim(self.desk, "daily", "2026-11-17", "desktop")
