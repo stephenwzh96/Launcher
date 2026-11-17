@@ -4,6 +4,10 @@ Unlike apps, a task ends. Each run writes its own log (logs/tasks/<id>_<time>.lo
 is kept in logs/tasks_state.json, so "done today" and the last result survive a launcher restart. Progress comes
 from the log: the latest line containing "== k/n Title"; a task with a progress file (tasks.yaml `progress_file`,
 progress.py) adds the time since its last output, its ETA, and whether it has stalled or been abandoned.
+
+Stop asks first: each task runs in its own process group, which Stop sends CTRL_BREAK_EVENT, so a task can record
+why it ended (Trend's Start of Day records "stopped" and a FAILED day). Only if it has not ended STOP_GRACE_S
+later is it ended by force (taskkill /T /F).
 """
 import json
 import os
@@ -16,11 +20,14 @@ from pathlib import Path
 
 import progress
 from config import TaskConfig
-from process_control import pid_alive
+from process_control import pid_alive, send_ctrl_break
 
 PROGRESS = re.compile(r"== (\d+)/(\d+) (.+)")
 TAIL_BYTES = 64_000
 SLACK = timedelta(seconds=60)
+STOP_GRACE_S = 20
+# no window, and a process group of its own, which Stop can send CTRL_BREAK_EVENT without reaching the launcher
+START_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
 
 
 def _aware(text: str) -> datetime:
@@ -43,8 +50,9 @@ def _tail(path: Path, max_bytes: int = TAIL_BYTES) -> str:
 
 
 class TaskRunner:
-    def __init__(self, tasks: list[TaskConfig], log_dir: Path):
+    def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S):
         self.tasks = {t.id: t for t in tasks}
+        self.stop_grace_s = stop_grace_s
         self.log_dir = log_dir / "tasks"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = log_dir / "tasks_state.json"
@@ -60,8 +68,9 @@ class TaskRunner:
         self.state_path.write_text(json.dumps(self.runs, indent=2))
 
     def _settle(self, task_id: str) -> None:
-        """Turn a finished process into done/failed. A run whose process this launcher did not start (it was
-        restarted mid-run) is followed by its pid; when that ends the result is unknown."""
+        """Turn a finished process into done/failed, or stopped when Stop asked it to end. A run whose process this
+        launcher did not start (it was restarted mid-run) is followed by its pid; when that ends the result is
+        unknown."""
         run = self.runs.get(task_id)
         if not run or run["state"] != "running":
             return
@@ -70,12 +79,13 @@ class TaskRunner:
             code = proc.poll()
             if code is None:
                 return
-            run.update(state="done" if code == 0 else "failed", exit_code=code)
+            state = "stopped" if run.get("stopping") else "done" if code == 0 else "failed"
+            run.update(state=state, exit_code=code)
             self.procs.pop(task_id)
         elif pid_alive(run["pid"], _run_start(run) + SLACK):
             return
         else:
-            run.update(state="unknown")
+            run.update(state="stopped" if run.get("stopping") else "unknown")
         run["finished"] = datetime.now().isoformat(timespec="seconds")
         self._save()
 
@@ -97,7 +107,7 @@ class TaskRunner:
                         cwd=str(task.resolved_cwd()),
                         stdout=log_file,
                         stderr=subprocess.STDOUT,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        creationflags=START_FLAGS,
                         env=env,
                     )
             except OSError as e:
@@ -116,14 +126,47 @@ class TaskRunner:
         return None
 
     def stop(self, task_id: str) -> None:
+        """Asks the run to end (CTRL_BREAK_EVENT to its process group), and ends it by force if it is still going
+        STOP_GRACE_S later. Returns at once; the row shows Stopping meanwhile."""
         with self.lock:
             self.queue.clear()  # stopping one task also ends a "Run all"
             run = self.runs.get(task_id)
-            if not run or run["state"] != "running":
+            if not run or run["state"] != "running" or run.get("stopping"):
                 return
-            subprocess.run(["taskkill", "/PID", str(run["pid"]), "/T", "/F"], capture_output=True)
-            self.procs.pop(task_id, None)
-            run.update(state="stopped", finished=datetime.now().isoformat(timespec="seconds"))
+            run["stopping"] = datetime.now().isoformat(timespec="seconds")
+            self._save()
+            args = (task_id, run["pid"], self.procs.get(task_id), _run_start(run) + SLACK)
+        threading.Thread(target=self._stop, args=args, daemon=True).start()
+
+    def _stop(self, task_id: str, pid: int, proc: subprocess.Popen | None, created_by: datetime) -> None:
+        def ended() -> bool:
+            return proc.poll() is not None if proc else not pid_alive(pid, created_by)
+
+        asked = send_ctrl_break(pid)
+        deadline = time.monotonic() + self.stop_grace_s
+        while asked and not ended() and time.monotonic() < deadline:
+            time.sleep(0.25)
+        forced = not ended()
+        if forced:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+            if proc:
+                try:
+                    proc.wait(10)
+                except subprocess.TimeoutExpired:
+                    pass
+        with self.lock:
+            run = self.runs.get(task_id)
+            if not run or run.get("pid") != pid:  # a newer run has started meanwhile
+                return
+            # asked: it ended within the grace time; forced: it did not; killed: it could not be asked
+            run["stop"] = "asked" if not forced else "forced" if asked else "killed"
+            if run["state"] == "running":
+                run.update(
+                    state="stopped",
+                    finished=datetime.now().isoformat(timespec="seconds"),
+                    exit_code=proc.poll() if proc else None,
+                )
+                self.procs.pop(task_id, None)
             self._save()
 
     def run_all(self) -> list[str]:
@@ -208,6 +251,8 @@ class TaskRunner:
                     prog = self._progress(task, run, now)
                     item["run"] = {
                         **{k: run[k] for k in ("state", "started", "finished", "exit_code")},
+                        "stopping": bool(run.get("stopping")) and run["state"] == "running",
+                        "stop": run.get("stop"),  # how a stopped run ended: asked, forced or killed
                         "step": {"k": int(steps[-1][0]), "n": int(steps[-1][1]), "title": steps[-1][2].strip()}
                         if steps
                         else None,
@@ -218,4 +263,4 @@ class TaskRunner:
                         item["run"]["step"] = prog["step"]
                 out.append(item)
             running_all = bool(self.queue)
-        return {"running_all": running_all, "tasks": out}
+        return {"running_all": running_all, "stop_grace_s": self.stop_grace_s, "tasks": out}

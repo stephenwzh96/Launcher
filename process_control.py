@@ -3,6 +3,7 @@ import ctypes
 import os
 import socket
 import subprocess
+import sys
 import urllib.error
 import urllib.request
 from ctypes import wintypes
@@ -18,6 +19,20 @@ _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintype
 _kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE, *[ctypes.POINTER(wintypes.FILETIME)] * 4]
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 PROCESS_QUERY_LIMITED_INFORMATION, ERROR_ACCESS_DENIED, STILL_ACTIVE = 0x1000, 5, 259
+CTRL_BREAK_HELPER = Path(__file__).resolve().parent / "ctrl_break.py"
+
+
+def send_ctrl_break(pid: int) -> bool:
+    """CTRL_BREAK_EVENT to the process group that `pid` leads (a task started with CREATE_NEW_PROCESS_GROUP), on that
+    task's own console, through ctrl_break.py. A Python task gets SIGBREAK and can record why it ended. True if sent."""
+    try:
+        done = subprocess.run(
+            [sys.executable, str(CTRL_BREAK_HELPER), str(pid)],
+            capture_output=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
 
 
 def pid_alive(pid: int, created_by: datetime | None = None) -> bool:

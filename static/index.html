@@ -312,6 +312,7 @@ async function init() {
 }
 
 // ---------- Today's run (tasks.yaml) ----------
+let stopGraceS = 20;  // Stop asks first, then ends the run by force this long after (from /api/tasks)
 const openLogs = new Set();
 const tasksById = {};
 const lastState = {};
@@ -325,7 +326,7 @@ function stepState(t) {
   const p = r && r.progress;
   if (t.queued) return "queued";
   if (!r) return "todo";
-  if (p && p.abandoned) return "abandoned";
+  if (p && p.abandoned && r.state !== "stopped") return "abandoned";  // a run Stop ended says so instead
   if (r.state === "running" && p && p.stalled) return "stalled";
   if (r.state === "done") return t.done_today ? "done" : "todo";
   return r.state;  // running, failed, stopped, unknown
@@ -339,7 +340,12 @@ function stateText(t) {
   const step = r.step ? `step ${r.step.k} of ${r.step.n}: ${r.step.title}` : "";
   const p = r.progress;
   const ran = minutes(r.started, new Date());
-  if (p && p.abandoned) return `Abandoned at ${step || "the start"}: its process is gone and left no result, ${at}`;
+  if (p && p.abandoned && r.state !== "stopped") {
+    return `Abandoned at ${step || "the start"}: its process is gone and left no result, ${at}`;
+  }
+  if (r.state === "running" && r.stopping) {
+    return `Stopping${step ? ` at ${step}` : ""}: asked to end, by force after ${stopGraceS} s`;
+  }
   if (r.state === "running" && p) {  // the progress file's ETA replaces expected_minutes
     if (p.stalled) return `Stalled: no output for ${p.idle_min} min, at ${step || "the start"} (${ran} min)`;
     const eta = p.eta ? `, ETA ${p.eta}` : "";
@@ -357,7 +363,14 @@ function stateText(t) {
   }
   const where = step ? `at ${step}` : "at the start";
   if (r.state === "failed") return `Failed ${where}, ${at}`;
-  if (r.state === "stopped") return `Stopped ${where}, ${at}`;
+  if (r.state === "stopped") {
+    const silent = p && p.abandoned ? ", so it recorded nothing" : "";  // its progress file still says running
+    if (r.stop === "forced") {
+      return `Stopped by force ${where}, ${at}: it had not ended ${stopGraceS} s after being asked${silent}`;
+    }
+    if (r.stop === "killed") return `Stopped by force ${where}, ${at}: it could not be asked to end${silent}`;
+    return `Stopped ${where}, ${at}`;
+  }
   return `Result unknown: the launcher restarted during the run, ${at}`;
 }
 
@@ -425,7 +438,7 @@ function renderTask(t) {
   start.hidden = running || t.queued;
   start.disabled = false;  // startTask disables it until the run shows up
   start.textContent = t.done_today ? "Rerun" : "Start";
-  $(".stop", el).hidden = !running;
+  $(".stop", el).hidden = !running || t.run.stopping;
   $(".log-toggle", el).hidden = !t.run;
 }
 
@@ -457,6 +470,7 @@ async function refreshTasks() {
     return;
   }
   const tasks = data.tasks;
+  stopGraceS = data.stop_grace_s;
   if (!tasks.length) $("#tasks").innerHTML = '<li class="empty">No tasks yet: add them to tasks.yaml.</li>';
   tasks.forEach(renderTask);
   for (const t of tasks) {  // a run just ended: what is due has changed
@@ -502,7 +516,11 @@ async function startTask(id) {
 }
 
 async function stopTask(id) {
-  if (!confirm(`Stop ${tasksById[id].label}? Steps already finished are kept; the current step is cut short.`)) return;
+  const label = tasksById[id].label;
+  const ask = `Stop ${label}? It is asked to end first, so it can record why; if it has not ended ${stopGraceS} s `
+    + "later it is ended by force. Steps already finished are kept; the current step is cut short.";
+  if (!confirm(ask)) return;
+  $(`#task-${id} .stop`).hidden = true;
   await fetch(`/api/tasks/${id}/stop`, { method: "POST" });
   refreshTasks();
 }

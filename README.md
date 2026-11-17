@@ -42,6 +42,12 @@ The **Start of Day** panel at the top lists one-shot jobs to start by hand each 
 schedule). Each row shows Not run yet / Running k/n step / Done today / Failed at step, with Start (Rerun once done
 today), Stop and Log. **Run all** runs every task not yet done today, top to bottom, and stops at the first failure.
 
+**Stop asks first.** Each task runs in its own process group (`CREATE_NEW_PROCESS_GROUP`, no window). Stop sends
+that group `CTRL_BREAK_EVENT` (Python sees `SIGBREAK`), so the task can record why it ended: Trend's Start of Day
+records `stopped` and a FAILED day. The row shows "Stopping" meanwhile. If the task has not ended 20 s later it is
+ended by force (`taskkill /T /F`), and the row says "Stopped by force". Since the task has its own hidden console,
+the event is sent by a small helper, [`ctrl_break.py`](ctrl_break.py), that attaches to that console.
+
 Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 
 ```yaml
@@ -78,9 +84,10 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 
 - `config.py` — loads and validates `apps.yaml` and `tasks.yaml`.
 - `process_control.py` — start/stop a process, check if it's up (TCP or
-  HTTP), find a process by the port it's listening on.
-- `task_runner.py` — runs the Start of Day tasks: start, stop, Run all,
-  progress from the log, last run per task.
+  HTTP), find a process by the port it's listening on, whether a pid is
+  still running, and CTRL_BREAK to a task (through `ctrl_break.py`).
+- `task_runner.py` — runs the Start of Day tasks: start, stop (asked, then
+  forced), Run all, progress from the log, last run per task.
 - `progress.py` — reads a task's progress file: step, last output, ETA, stalled
   or abandoned.
 - `app.py` — thin FastAPI layer: `/api/apps`, `/api/status`,
