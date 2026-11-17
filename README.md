@@ -120,11 +120,43 @@ Stopping looks up *whatever process is currently listening on the configured
 port* rather than remembering what it started — so Stop still works even if
 you started something manually, or the launcher itself restarted.
 
+## Machine sync (desktop and laptop)
+
+`machine_sync/` keeps the desktop and the laptop on the same code and data, both ways, so work can continue on
+either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
+
+- **What it does, every 5 minutes and at logon, unlock and wake** (Task Scheduler task "Machine sync"):
+  - code: fetches the 8 repos, fast-forwards every branch, and follows the branch and commit of the PC last worked
+    on. It never commits, pushes, merges or forces; a repo with edits, unpushed commits or a daily task running is
+    left as it is and the status says why. Unpushed commits stay on their PC: push them to share.
+  - data: Git-ignored data files move both ways through Syncthing (laptop `C:\Users\User\TripSync`, desktop
+    `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs; a file changed on both, and
+    every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 14 days.
+  - trading safety: while a daily task runs, nothing in Trend or IBKR changes on that PC; on the PC that holds the
+    day's claim, their code stays fixed until 09:00 the next day.
+- **Status:** `C:\Users\User\MachineSync\sync_status.txt` (log: `sync.log`). It names the other PC's last run,
+  today's claim, each repo's state and the data moved.
+- **Commands** (standalone Python, from `C:\Users\User\MachineSync\tool`):
+
+```powershell
+$py = "C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe"
+& $py -I C:\Users\User\MachineSync\tool\run_sync.py run                   # one run now
+& $py -I C:\Users\User\MachineSync\tool\run_sync.py run --update-frozen   # also update code kept for today's run
+& $py -I C:\Users\User\MachineSync\tool\run_sync.py run --allow-deletes   # let a held batch of deletions through
+& $py -I C:\Users\User\MachineSync\tool\run_sync.py status
+```
+
+- **Install on a PC** (from this folder): `& $py -m machine_sync install --machine desktop` (or `laptop`). The
+  installed copy updates itself from this repo's `origin/main` after passing a self-test.
+
 ## Testing
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover tests
 ```
+
+The sync tool's tests also run on the standalone Python:
+`& $py -m unittest discover -s tests -p "test_*.py" -t tests` (the four launcher test files then fail to import).
 
 To try the page against made-up tasks and progress files, point the launcher at
 another tasks file and logs folder, so the real task state is never touched:
