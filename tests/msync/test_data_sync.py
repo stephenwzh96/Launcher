@@ -89,7 +89,7 @@ class DataSyncTest(TempDirCase):
         self.write(self.desk, "data/f.csv", "v2")
         self.cycle(self.desk, self.lap)
         self.assertEqual(self.read(self.lap, "data/f.csv"), "v2")
-        self.write(self.lap, "data/f.csv", "v1")
+        self.write(self.lap, "data/f.csv", "v1", age=10 ** 6)  # put back from an old copy: an old modified time
         self.cycle(self.lap, self.desk)
         self.assertEqual(self.read(self.desk, "data/f.csv"), "v1")
         self.pc_run(self.lap)
@@ -136,15 +136,15 @@ class DataSyncTest(TempDirCase):
         self.assertEqual(len(list(self.path(self.desk, "data").glob("*.csv"))), 40)
 
     def test_bootstrap_keeps_newer_mtime(self) -> None:
-        self.write(self.desk, "data/b.csv", "desk", age=1000)
-        self.write(self.lap, "data/b.csv", "lap", age=100)
-        self.pc_run(self.desk)  # the desktop runs first
+        self.write(self.desk, "data/b.csv", "desk", age=100)  # the newer copy
+        self.write(self.lap, "data/b.csv", "lap", age=1000)
+        self.pc_run(self.desk)  # the PC with the newer copy runs first, so run order alone would pick the laptop
         self.exchange()
         self.pc_run(self.lap)
         self.exchange()
         self.pc_run(self.desk)
-        self.assertEqual(self.read(self.desk, "data/b.csv"), "lap")
-        self.assertEqual(self.read(self.lap, "data/b.csv"), "lap")
+        self.assertEqual(self.read(self.desk, "data/b.csv"), "desk")
+        self.assertEqual(self.read(self.lap, "data/b.csv"), "desk")
 
     def test_waits_for_content(self) -> None:
         self.write(self.lap, "data/late.csv", "late")
@@ -157,6 +157,15 @@ class DataSyncTest(TempDirCase):
         self.exchange()
         self.pc_run(self.desk)
         self.assertEqual(self.read(self.desk, "data/late.csv"), "late")
+
+    def test_waits_while_content_differs_from_note(self) -> None:
+        self.write(self.lap, "data/late.csv", "complete")
+        self.pc_run(self.lap)
+        self.exchange()
+        (self.desk.home / "TripSync" / "Trend" / "data" / "late.csv").write_text("parti")  # still arriving
+        res = self.pc_run(self.desk)
+        self.assertEqual(res.waiting, 1)
+        self.assertFalse(self.path(self.desk, "data/late.csv").exists())
 
     def test_tracked_here_not_imported(self) -> None:
         desk_file = self.write(self.desk, "data/tracked.csv", "tracked on desk")
