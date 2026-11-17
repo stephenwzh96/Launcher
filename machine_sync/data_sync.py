@@ -1,0 +1,342 @@
+"""Two-way data (design, "Data step"): each PC records a version per data file (content hash, change stamp, the stamp
+it replaced, deleted or not), publishes all of them in its note, keeps in its outbox only the files the other PC
+lacks and that are newer here, and takes the other PC's newer versions. The newer change wins on both PCs; a file
+this PC had changed is backed up before it is replaced or deleted."""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+from . import NOTE_FORMAT
+from .data_files import SKIP_DIRS, data_files, hash_file, is_sqlite, sqlite_open
+from .gitops import git
+from .settings import BACKUP_DAYS, BRAKE_FRACTION, BRAKE_MIN, STABLE_S, TOMBSTONE_DAYS, Settings
+
+OUTBOX_OWN = {"_state", "_tools", ".stfolder", ".stignore", ".stversions"}  # never data, never removed
+CLASH_KEEP_DAYS = 7
+
+
+@dataclass
+class ImportResult:
+    taken: int = 0
+    deleted: int = 0
+    waiting: int = 0
+    skipped: list[str] = field(default_factory=list)
+    clashes: list[str] = field(default_factory=list)
+    held_deletes: int = 0
+    exported: int = 0
+
+
+# ----------------------------------------------------------------- state and notes
+def _write_json(path: Path, doc: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".msync-tmp")
+    tmp.write_text(json.dumps(doc, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_state(cfg: Settings) -> dict:
+    try:
+        state = json.loads((cfg.sync_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    for key, empty in (("files", {}), ("outbox", {}), ("clashes", []), ("unstable", [])):
+        state.setdefault(key, empty)
+    return state
+
+
+def save_state(cfg: Settings, state: dict) -> None:
+    _write_json(cfg.sync_dir / "state.json", state)
+
+
+def read_note(cfg: Settings, machine: str) -> dict | None:
+    try:
+        return json.loads(cfg.note_path(machine).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def make_note(cfg: Settings, state: dict, now: float, extra: dict | None = None) -> dict:
+    files = {rel: [e["h"], e["t"], e["m"], e["b"], e["del"]] for rel, e in state["files"].items()}
+    return {"format": NOTE_FORMAT, "machine": cfg.machine, "written": now, "files": files,
+            "clashes": state["clashes"], **(extra or {})}
+
+
+def write_note(cfg: Settings, note: dict) -> None:
+    _write_json(cfg.note_path(cfg.machine), note)
+
+
+def _key(v: dict) -> tuple[float, str]:
+    return (v["t"], v["m"])
+
+
+def _version(raw: list) -> dict:
+    return {"h": raw[0], "t": raw[1], "m": raw[2], "b": raw[3], "del": bool(raw[4])}
+
+
+def _repo_of(cfg: Settings, rel: str) -> str | None:
+    for repo in sorted(cfg.repos, key=len, reverse=True):
+        if rel.startswith(repo + "/"):
+            return repo
+    return None
+
+
+def _root_of(cfg: Settings, rel: str) -> Path | None:
+    repo = _repo_of(cfg, rel)
+    if repo:
+        return cfg.repo_path(repo)
+    top = rel.split("/", 1)[0]
+    return cfg.home / top if top in cfg.plain_roots else None
+
+
+# ----------------------------------------------------------------- scan this PC
+def scan(cfg: Settings, state: dict, now: float) -> dict:
+    files = data_files(cfg)
+    entries, unstable = state["files"], []
+    for rel, path in files.items():
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        e = entries.get(rel)
+        if e and not e["del"] and e["size"] == st.st_size and e["mt"] == st.st_mtime_ns:
+            continue
+        if now - st.st_mtime < STABLE_S:
+            unstable.append(rel)
+            continue
+        h = hash_file(path)
+        if e and not e["del"] and e["h"] == h:
+            e["size"], e["mt"] = st.st_size, st.st_mtime_ns
+            continue
+        stamp = min(st.st_mtime, now) if e is None else now  # first sight: its own time; any later change: now
+        entries[rel] = {"h": h, "t": stamp, "m": cfg.machine, "b": e["t"] if e else None, "del": False,
+                        "size": st.st_size, "mt": st.st_mtime_ns}
+    for rel, e in list(entries.items()):
+        if e["del"]:
+            if now - e["t"] > TOMBSTONE_DAYS * 86400:
+                del entries[rel]
+            continue
+        if rel in files:
+            continue
+        root = _root_of(cfg, rel)
+        if root is None or not root.exists():
+            continue  # a whole repo or folder missing is never read as deletions
+        if (cfg.home / rel).exists():
+            del entries[rel]  # still here but no longer data (now tracked or excluded)
+            continue
+        entries[rel] = {"h": None, "t": now, "m": cfg.machine, "b": e["t"], "del": True, "size": 0, "mt": 0}
+    state["unstable"] = unstable
+    return state
+
+
+# ----------------------------------------------------------------- import from the other PC
+def _ignored_here(cfg: Settings, rels: list[str]) -> set[str]:
+    """The repo paths among rels that this PC's Git ignores (the only ones the sync may write)."""
+    allowed: set[str] = set()
+    by_repo: dict[str, list[str]] = {}
+    for rel in rels:
+        repo = _repo_of(cfg, rel)
+        if repo is None:
+            allowed.add(rel)  # plain folders
+        else:
+            by_repo.setdefault(repo, []).append(rel[len(repo) + 1:])
+    for repo, inside in by_repo.items():
+        root = cfg.repo_path(repo)
+        if not (root / ".git").exists():
+            continue
+        listing = git(root, "check-ignore", "--stdin", "-z", input="\0".join(inside) + "\0").stdout
+        allowed |= {f"{repo}/{r}" for r in listing.split("\0") if r}
+    return allowed
+
+
+def _copy_atomic(src: Path, dst: Path) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".msync-tmp")
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+
+
+def _backup(cfg: Settings, rel: str, now: float, move: bool) -> Path:
+    day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+    target = cfg.sync_dir / "backup" / day / rel
+    if target.exists():
+        target = target.with_name(f"{target.stem}.{datetime.fromtimestamp(now):%H%M%S}{target.suffix}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    src = cfg.home / rel
+    if move:
+        shutil.move(src, target)
+    else:
+        shutil.copy2(src, target)
+    return target
+
+
+def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_repos: set[str],
+                     allow_deletes: bool, now: float) -> ImportResult:
+    res = ImportResult()
+    entries, unstable = state["files"], set(state["unstable"])
+    candidates = []
+    for rel, raw in ((peer_note or {}).get("files") or {}).items():
+        p, e = _version(raw), entries.get(rel)
+        if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
+            if _key(p) > _key(e):  # same content: both keep the later stamp
+                e.update(t=p["t"], m=p["m"], b=p["b"])
+            continue
+        if (e is None and p["del"]) or (e is not None and _key(e) >= _key(p)):
+            continue
+        candidates.append((rel, p, e))
+    allowed = _ignored_here(cfg, [rel for rel, _, _ in candidates])
+    takes, deletes = [], []
+    for rel, p, e in candidates:
+        repo = _repo_of(cfg, rel)
+        if repo in frozen_repos:
+            res.skipped.append(f"{rel}: held while a daily task runs here")
+            continue
+        if rel in unstable:
+            res.skipped.append(f"{rel}: changing here right now")
+            continue
+        if repo and rel not in allowed:
+            res.skipped.append(f"{rel}: tracked by Git on this PC, left to Git")
+            continue
+        clash = e is not None and not e["del"] and (p["b"] is None or e["t"] > p["b"])
+        if p["del"]:
+            deletes.append((rel, p, clash))
+            continue
+        staged = cfg.peer_outbox / rel
+        try:
+            arrived = staged.is_file() and hash_file(staged) == p["h"]
+        except OSError:
+            arrived = False
+        if not arrived:
+            res.waiting += 1
+            continue
+        if is_sqlite(staged) and sqlite_open(cfg.home / rel):
+            res.skipped.append(f"{rel}: database open on this PC")
+            continue
+        takes.append((rel, p, clash, staged))
+    live = sum(1 for e in entries.values() if not e["del"])
+    if len(deletes) > max(BRAKE_MIN, BRAKE_FRACTION * live) and not allow_deletes:
+        res.held_deletes, deletes = len(deletes), []
+    for rel, p, clash, staged in takes:
+        dst = cfg.home / rel
+        try:
+            backup = _backup(cfg, rel, now, move=False) if clash and dst.exists() else None
+            _copy_atomic(staged, dst)
+        except OSError as err:
+            res.skipped.append(f"{rel}: could not write ({err.strerror or err})")
+            continue
+        st = dst.stat()
+        entries[rel] = {**p, "size": st.st_size, "mt": st.st_mtime_ns}
+        res.taken += 1
+        if clash:
+            _record_clash(state, res, rel, p, backup, now)
+    for rel, p, clash in deletes:
+        dst = cfg.home / rel
+        backup = None
+        try:
+            if dst.exists():
+                backup = _backup(cfg, rel, now, move=True)
+        except OSError as err:
+            res.skipped.append(f"{rel}: could not delete ({err.strerror or err})")
+            continue
+        entries[rel] = {**p, "h": None, "size": 0, "mt": 0}
+        res.deleted += 1
+        if clash:
+            _record_clash(state, res, rel, p, backup, now)
+    return res
+
+
+def _record_clash(state: dict, res: ImportResult, rel: str, p: dict, backup: Path | None, now: float) -> None:
+    what = "deleted" if p["del"] else "changed"
+    res.clashes.append(f"{rel}: changed on both PCs; {p['m']}'s {what} version kept, this PC's copy in {backup}")
+    state["clashes"].append({"path": rel, "when": now, "kept": p["m"], "backup": str(backup) if backup else None})
+
+
+# ----------------------------------------------------------------- this PC's outbox
+def _outbox_files(root: Path):
+    for dirpath, dirnames, filenames in os.walk(root):
+        if Path(dirpath) == root:
+            dirnames[:] = [d for d in dirnames if d not in OUTBOX_OWN]
+        for name in filenames:
+            path = Path(dirpath) / name
+            rel = path.relative_to(root).as_posix()
+            if rel.split("/")[0] not in OUTBOX_OWN:
+                yield rel, path
+
+
+def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
+    """Keep exactly the files the other PC lacks and that are newer here; remove the rest."""
+    peer_files = (peer_note or {}).get("files") or {}
+    unstable = set(state["unstable"])
+    wanted: dict[str, dict] = {}
+    for rel, e in state["files"].items():
+        if e["del"] or rel in unstable:
+            continue
+        raw = peer_files.get(rel)
+        if raw is not None:
+            p = _version(raw)
+            if (not p["del"] and p["h"] == e["h"]) or _key(p) > _key(e):
+                continue
+        src = cfg.home / rel
+        if is_sqlite(src) and sqlite_open(src):
+            continue
+        wanted[rel] = e
+    root, record, written = cfg.own_outbox, state["outbox"], 0
+    for rel, e in wanted.items():
+        dst, src = root / rel, cfg.home / rel
+        try:
+            if dst.is_file() and (record.get(rel) == e["h"] or hash_file(dst) == e["h"]):
+                record[rel] = e["h"]
+                continue
+            _copy_atomic(src, dst)
+            st = src.stat()
+            if st.st_size != e["size"] or st.st_mtime_ns != e["mt"] or hash_file(dst) != e["h"]:
+                dst.unlink(missing_ok=True)  # changed while it was copied: next run
+                record.pop(rel, None)
+                continue
+        except OSError:
+            continue
+        record[rel] = e["h"]
+        written += 1
+    if root.exists():
+        for rel, path in list(_outbox_files(root)):
+            if rel not in wanted:
+                path.unlink(missing_ok=True)
+        for dirpath, _dirs, _files in sorted(os.walk(root), key=lambda w: -len(w[0])):
+            d = Path(dirpath)
+            if d != root and d.relative_to(root).parts[0] not in OUTBOX_OWN and not any(d.iterdir()):
+                d.rmdir()
+    for rel in list(record):
+        if rel not in wanted:
+            record.pop(rel)
+    return written
+
+
+# ----------------------------------------------------------------- one data run
+def _prune(cfg: Settings, state: dict, now: float) -> None:
+    state["clashes"] = [c for c in state["clashes"] if now - c["when"] < CLASH_KEEP_DAYS * 86400]
+    backups = cfg.sync_dir / "backup"
+    if backups.exists():
+        for day in backups.iterdir():
+            try:
+                age = now - datetime.strptime(day.name, "%Y-%m-%d").timestamp()
+            except ValueError:
+                continue
+            if age > (BACKUP_DAYS + 1) * 86400:
+                shutil.rmtree(day, ignore_errors=True)
+
+
+def sync_data(cfg: Settings, state: dict, peer_note: dict | None, now: float, frozen_repos: set[str] = frozenset(),
+              allow_deletes: bool = False, note_extra: dict | None = None) -> ImportResult:
+    """Scan, import the other PC's newer versions, refresh this PC's outbox, then write the note (files first, then
+    the note that names them) and the state."""
+    scan(cfg, state, now)
+    res = import_from_peer(cfg, state, peer_note, set(frozen_repos), allow_deletes, now)
+    res.exported = refresh_outbox(cfg, state, peer_note)
+    _prune(cfg, state, now)
+    write_note(cfg, make_note(cfg, state, now, note_extra))
+    save_state(cfg, state)
+    return res
