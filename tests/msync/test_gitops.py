@@ -29,7 +29,15 @@ class ReadRepoTest(TempDirCase):
         (self.repo / "data" / "x.csv").write_text("1")  # ignored: not counted
         s = read_repo(self.repo)
         self.assertEqual(s.unpushed, 1)
-        self.assertEqual(s.uncommitted, 2)
+        self.assertEqual(s.uncommitted, 1)  # tracked edits only
+        self.assertEqual(s.untracked, 1)
+
+    def test_untracked_file_is_not_activity(self) -> None:
+        before = read_repo(self.repo).last_activity
+        time.sleep(1.1)
+        (self.repo / "tws_layouts").mkdir()
+        (self.repo / "tws_layouts" / "layout.xml").write_text("<x/>")  # an app's untracked file, not code work
+        self.assertEqual(read_repo(self.repo).last_activity, before)
 
     def test_unpushed_without_upstream_counts_commits_github_lacks(self) -> None:
         run(self.repo, "switch", "-c", "local-only")

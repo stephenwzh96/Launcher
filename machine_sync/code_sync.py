@@ -28,8 +28,8 @@ def repo_note(state: RepoState, running: bool) -> dict:
     """The per-repo part of this PC's note."""
     return {"branch": state.branch, "head": state.head, "upstream": state.upstream,
             "upstream_gone": state.upstream_gone, "upstream_head": state.upstream_head, "unpushed": state.unpushed,
-            "uncommitted": state.uncommitted, "operation": state.operation, "last_activity": state.last_activity,
-            "running": running}
+            "uncommitted": state.uncommitted, "untracked": state.untracked, "operation": state.operation,
+            "last_activity": state.last_activity, "running": running}
 
 
 def _plural(n: int, word: str) -> str:
@@ -206,6 +206,8 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
             notes.append(f"same as {who}")
         elif r.moved:
             notes.append("updated")
+    if end.untracked:
+        notes.append(f"{_plural(end.untracked, 'untracked file')} here (not in Git: commit or ignore them to share)")
     r.line = "  ".join([_where(end.branch, end.head), *notes]) if notes else _where(end.branch, end.head)
     return r
 

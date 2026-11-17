@@ -47,6 +47,16 @@ class CodeSyncTest(TempDirCase):
         self.assertEqual(read_repo(self.desk).branch, "desk-branch")
         self.assertFalse(r.moved)
 
+    def test_untracked_files_do_not_block_following(self) -> None:
+        (self.desk / "tws_layouts").mkdir()
+        (self.desk / "tws_layouts" / "layout.xml").write_text("<desk/>")
+        head = self.push_feature()
+        r = self.sync_desk(self.lap_note())
+        s = read_repo(self.desk)
+        self.assertEqual((s.branch, s.head), ("feature", head))
+        self.assertEqual((self.desk / "tws_layouts" / "layout.xml").read_text(), "<desk/>")
+        self.assertIn("1 untracked file", r.line)
+
     def test_stays_when_working_here(self) -> None:
         self.push_feature()
         (self.desk / "README.md").write_text("desk edit\n")

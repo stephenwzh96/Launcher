@@ -36,7 +36,8 @@ class RepoState:
     upstream_gone: bool  # the branch tracked a GitHub branch that no longer exists
     upstream_head: str | None
     unpushed: int  # commits on HEAD that GitHub lacks (0 when the GitHub branch was deleted)
-    uncommitted: int  # tracked changes plus untracked files Git does not ignore
+    uncommitted: int  # edited, staged or conflicted tracked files: these stop a branch switch
+    untracked: int  # new files Git does not ignore: a switch keeps them, so they never stop one (status only)
     operation: str | None  # "rebase", "merge", "cherry-pick", "bisect" in progress
     last_activity: float  # unix time of Stephen's last move or edit here (the tool's own moves excluded)
 
@@ -45,7 +46,7 @@ def _status(repo: Path) -> dict:
     """One `git status --porcelain=v2 --branch` call: head, branch, upstream, ahead count, changed paths.
     An upstream that is set but missing on the remote has no `branch.ab` line (gone)."""
     raw = git(repo, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all").stdout
-    info: dict = {"head": "", "branch": None, "upstream": None, "ahead": None, "changed": []}
+    info: dict = {"head": "", "branch": None, "upstream": None, "ahead": None, "changed": [], "untracked": []}
     entries = raw.split("\0")
     i = 0
     while i < len(entries):
@@ -66,7 +67,7 @@ def _status(repo: Path) -> dict:
         elif e.startswith("u "):
             info["changed"].append(e.split(" ", 10)[-1])
         elif e.startswith("? "):
-            info["changed"].append(e[2:])
+            info["untracked"].append(e[2:])
         i += 1
     return info
 
@@ -119,4 +120,4 @@ def read_repo(repo: Path) -> RepoState:
             pass  # deleted files have no time; the reflog stands
     return RepoState(branch=branch, head=head, upstream=upstream, upstream_gone=gone,
                      upstream_head=upstream_head or None, unpushed=unpushed, uncommitted=len(changed),
-                     operation=_operation(repo), last_activity=activity)
+                     untracked=len(st["untracked"]), operation=_operation(repo), last_activity=activity)
