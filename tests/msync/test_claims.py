@@ -60,6 +60,37 @@ class ClaimsTest(TempDirCase):
         claim(self.desk, "other", "2099-01-01", "desktop")  # a stray far-future day (a wrong clock, a test)
         self.assertEqual(holder(self.lap, "daily", today).holder, "laptop")
 
+    def test_take_over_with_stale_lease_is_refused(self) -> None:
+        claim(self.desk, "daily", "2026-11-17", "desktop")
+        seen = holder(self.lap, "daily", "2026-11-17").sha
+        claim(self.desk, "daily", "2026-11-17", "vps", take_over=True)  # someone else moved it meanwhile
+        r = claim(self.lap, "daily", "2026-11-17", "laptop", take_over=True, lease=seen)
+        self.assertFalse(r.ok)
+        self.assertEqual(r.holder, "vps")
+        self.assertEqual(holder(self.desk, "daily", "2026-11-17").holder, "vps")
+
+    def test_claim_ignores_commit_signing_settings(self) -> None:
+        run(self.lap, "config", "commit.gpgSign", "true")
+        run(self.lap, "config", "gpg.program", "no-such-gpg-program")
+        self.assertTrue(claim(self.lap, "daily", "2026-11-17", "laptop").ok)
+
+    def test_claim_times_out_when_github_stalls(self) -> None:
+        import socket
+        import threading
+        import time
+
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        threading.Thread(target=lambda: server.accept(), daemon=True).start()
+        run(self.lap, "remote", "set-url", "origin", f"http://127.0.0.1:{server.getsockname()[1]}/launcher.git")
+        started = time.time()
+        r = claim(self.lap, "daily", "2026-11-17", "laptop", timeout=3)
+        server.close()
+        self.assertFalse(r.ok)
+        self.assertTrue(r.error)
+        self.assertLess(time.time() - started, 30)
+
     def test_prune_old_claims(self) -> None:
         claim(self.desk, "daily", "2026-09-01", "desktop")
         claim(self.desk, "daily", "2026-11-17", "desktop")

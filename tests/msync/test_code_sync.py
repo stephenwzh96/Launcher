@@ -153,6 +153,39 @@ class CodeSyncTest(TempDirCase):
         self.assertFalse(r.moved)
         self.assertTrue(r.warnings)
 
+    # ---- review fixes (final review of 17 Nov)
+    def test_branch_checked_out_in_other_worktree_is_left_alone(self) -> None:
+        old = self.push_feature()
+        run(self.desk, "fetch")
+        run(self.desk, "worktree", "add", str(self.tmp / "desk-wt"), "feature")
+        commit(self.lap, "g.txt", "g", push=True)
+        r = self.sync_desk(self.lap_note())  # the laptop leads on feature, which a desktop worktree has out
+        self.assertEqual(run(self.desk, "rev-parse", "feature"), old)
+        self.assertEqual(read_repo(self.desk).branch, "main")
+        self.assertFalse(r.moved)
+        self.assertTrue(any("worktree" in w for w in r.warnings), r.warnings)
+        self.sync_desk(None)  # nor fast-forwarded as a branch that is not checked out here
+        self.assertEqual(run(self.desk, "rev-parse", "feature"), old)
+
+    def test_fast_forward_never_overwrites_ignored_files(self) -> None:
+        (self.desk / "data").mkdir()
+        (self.desk / "data" / "x.csv").write_text("desk data")
+        (self.lap / "data").mkdir()
+        (self.lap / "data" / "x.csv").write_text("committed by mistake")
+        run(self.lap, "add", "-f", "data/x.csv")
+        run(self.lap, "commit", "-m", "track x.csv")
+        run(self.lap, "push")
+        r = self.sync_desk(None)
+        self.assertEqual((self.desk / "data" / "x.csv").read_text(), "desk data")
+        self.assertTrue(r.warnings)
+
+    def test_running_task_blocks_every_move(self) -> None:
+        before = run(self.desk, "rev-parse", "HEAD")
+        commit(self.lap, "l.txt", "laptop", push=True)
+        r = sync_code(self.desk_cfg, "Trend", None, frozen=False, running=True)
+        self.assertEqual(run(self.desk, "rev-parse", "HEAD"), before)
+        self.assertFalse(r.moved)
+
     def test_after_move_reports_npm_and_lock(self) -> None:
         (self.lap / "dashboard").mkdir()
         (self.lap / "dashboard" / "package-lock.json").write_text("{}")

@@ -23,13 +23,14 @@ sys.path.insert(0, str(here))
 from config import load_tasks
 tasks = load_tasks(here / "tasks.yaml")
 print(json.dumps([{"id": t.id, "claim": getattr(t, "claim", None), "cwd": str(t.resolved_cwd()),
-                   "cmd": t.resolved_cmd()} for t in tasks if getattr(t, "claim", None)]))
+                   "cmd": t.resolved_cmd()} for t in tasks]))
 """
 
 
 def load_daily_tasks(cfg: Settings) -> list[dict]:
-    """The daily tasks from the launcher's tasks.yaml, read through the launcher's own venv (it has the YAML
-    reader). Falls back to the last good copy in MachineSync\\tasks.json."""
+    """Every Start of Day task in the launcher's tasks.yaml (all of them are daily jobs, claimed or not), read
+    through the launcher's own venv (it has the YAML reader). Falls back to the last good copy in
+    MachineSync\\tasks.json, which an empty answer never overwrites."""
     cache = cfg.sync_dir / "tasks.json"
     launcher = cfg.repo_path("Marco/launcher")
     python = launcher / ".venv" / "Scripts" / "python.exe"
@@ -40,7 +41,7 @@ def load_daily_tasks(cfg: Settings) -> list[dict]:
             tasks = json.loads(done.stdout) if done.returncode == 0 else None
         except (OSError, ValueError, subprocess.TimeoutExpired):
             tasks = None
-        if isinstance(tasks, list):
+        if isinstance(tasks, list) and tasks:
             cfg.sync_dir.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(tasks), encoding="utf-8")
             return tasks

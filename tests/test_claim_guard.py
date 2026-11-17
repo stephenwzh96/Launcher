@@ -78,6 +78,39 @@ class ClaimGuardTest(unittest.TestCase):
         self.runner(claimer).start("sod", take_over=True)
         self.assertTrue(claimer.calls[0][3])
 
+    def test_status_not_blocked_while_claiming(self) -> None:
+        import threading
+        import time
+
+        class SlowClaimer(FakeClaimer):
+            def __call__(self, task, day, machine, take_over):
+                time.sleep(2)
+                return ClaimResult(True, machine, "2026-11-17T09:41:00")
+
+        r = self.runner(SlowClaimer())
+        starter = threading.Thread(target=r.start, args=("sod",))
+        starter.start()
+        time.sleep(0.3)
+        began = time.time()
+        r.status()
+        self.assertLess(time.time() - began, 1.0)
+        starter.join()
+
+    def test_waits_for_a_sync_run_then_refuses(self) -> None:
+        import os
+
+        (self.sync_dir / "run.lock").write_text(str(os.getpid()))  # a sync run in progress
+        r = self.runner(FakeClaimer(ClaimResult(True, "desktop", "2026-11-17T09:41:00")))
+        r.sync_wait_s = 0.5
+        err = r.start("sod")
+        self.assertIn("sync", err)
+        self.assertNotIn("sod", r.runs)
+
+    def test_sync_lock_released_after_start(self) -> None:
+        r = self.runner(FakeClaimer(ClaimResult(True, "desktop", "2026-11-17T09:41:00")))
+        self.assertIsNone(r.start("sod"))
+        self.assertFalse((self.sync_dir / "run.lock").exists())
+
     def test_reminder_hidden_when_other_pc_holds_claim(self) -> None:
         remind = RemindConfig(at=["00:00"], record=str(self.tmp / "no_record_{t}.json"))
         r = self.runner(FakeClaimer(), remind=remind)

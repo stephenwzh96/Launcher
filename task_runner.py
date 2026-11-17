@@ -22,11 +22,13 @@ import progress
 import reminder
 from config import TaskConfig
 from machine_sync import claims as day_claims
+from machine_sync import runlock as sync_lock
 from machine_sync.daily import read_claims, record_claim
 from process_control import pid_alive, send_ctrl_break
 
 HERE = Path(__file__).resolve().parent
 SYNC_DIR = Path(os.environ.get("USERPROFILE", r"C:\Users\User")) / "MachineSync"
+SYNC_WAIT_S = 120  # a sync run takes seconds; its first run on a PC about a minute
 
 PROGRESS = re.compile(r"== (\d+)/(\d+) (.+)")
 TAIL_BYTES = 64_000
@@ -67,6 +69,8 @@ class TaskRunner:
         self.claimer = claimer  # (task, day, machine, take_over) -> ClaimResult
         self.sync_dir = Path(sync_dir)
         self.refusals: dict[str, str] = {}  # task id -> the PC holding today's claim, after a refused start
+        self.start_lock = threading.Lock()
+        self.sync_wait_s = SYNC_WAIT_S
         self.log_dir = log_dir / "tasks"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.state_path = log_dir / "tasks_state.json"
@@ -140,41 +144,58 @@ class TaskRunner:
     # ----- actions -----
     def start(self, task_id: str, take_over: bool = False) -> str | None:
         """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim.
-        Returns an error message on failure, else None."""
+        A daily task starts only between sync runs (MachineSync\\run.lock, held while claiming and starting), so the
+        next sync run already sees it running. The claim goes to GitHub outside self.lock: the page's status stays
+        live meanwhile. Returns an error message on failure, else None."""
         task = self.tasks[task_id]
-        with self.lock:
-            self._settle(task_id)
-            self.refusals.pop(task_id, None)
-            if self.runs.get(task_id, {}).get("state") == "running":
-                return f"{task.label} is already running"
-            if task.claim and (refused := self._check_claim(task, take_over)):
-                return refused
-            now = datetime.now()
-            log_path = self.log_dir / f"{task_id}_{now:%Y%m%d-%H%M%S}.log"
-            env = {**os.environ, "PYTHONUNBUFFERED": "1", **task.env}
+        with self.start_lock:  # one start at a time (the page and a Run all)
+            with self.lock:
+                self._settle(task_id)
+                self.refusals.pop(task_id, None)
+                if self.runs.get(task_id, {}).get("state") == "running":
+                    return f"{task.label} is already running"
+            if not task.claim:
+                with self.lock:
+                    return self._spawn(task_id, task)
+            if not sync_lock.acquire(self.sync_dir, wait_s=self.sync_wait_s):
+                return (f"{task.label}: this PC's sync is busy (MachineSync\\run.lock) and did not finish in "
+                        f"{self.sync_wait_s:.0f} s; not started. Try again in a minute.")
             try:
-                with open(log_path, "w", encoding="utf-8") as log_file:
-                    proc = subprocess.Popen(
-                        task.resolved_cmd(),
-                        cwd=str(task.resolved_cwd()),
-                        stdout=log_file,
-                        stderr=subprocess.STDOUT,
-                        creationflags=START_FLAGS,
-                        env=env,
-                    )
-            except OSError as e:
-                return f"{task.label}: failed to start ({e})"
-            self.procs[task_id] = proc
-            self.runs[task_id] = {
-                "state": "running",
-                "started": now.isoformat(timespec="seconds"),
-                "started_utc": now.astimezone(UTC).isoformat(timespec="seconds"),
-                "finished": None,
-                "exit_code": None,
-                "pid": proc.pid,
-                "log": log_path.name,
-            }
-            self._save()
+                if refused := self._check_claim(task, take_over):
+                    return refused
+                with self.lock:
+                    return self._spawn(task_id, task)
+            finally:
+                sync_lock.release(self.sync_dir)
+
+    def _spawn(self, task_id: str, task: TaskConfig) -> str | None:
+        """Start the task's process (self.lock held)."""
+        now = datetime.now()
+        log_path = self.log_dir / f"{task_id}_{now:%Y%m%d-%H%M%S}.log"
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", **task.env}
+        try:
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                proc = subprocess.Popen(
+                    task.resolved_cmd(),
+                    cwd=str(task.resolved_cwd()),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    creationflags=START_FLAGS,
+                    env=env,
+                )
+        except OSError as e:
+            return f"{task.label}: failed to start ({e})"
+        self.procs[task_id] = proc
+        self.runs[task_id] = {
+            "state": "running",
+            "started": now.isoformat(timespec="seconds"),
+            "started_utc": now.astimezone(UTC).isoformat(timespec="seconds"),
+            "finished": None,
+            "exit_code": None,
+            "pid": proc.pid,
+            "log": log_path.name,
+        }
+        self._save()
         return None
 
     def stop(self, task_id: str) -> None:

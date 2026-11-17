@@ -81,6 +81,22 @@ class ReadRepoTest(TempDirCase):
         commit(self.repo, "c.txt", "c")
         self.assertGreater(read_repo(self.repo).last_activity, before)
 
+    def test_network_call_times_out(self) -> None:
+        import socket
+        import threading
+
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        conns = []
+        threading.Thread(target=lambda: conns.append(server.accept()), daemon=True).start()  # accepts, never answers
+        url = f"http://127.0.0.1:{server.getsockname()[1]}/repo.git"
+        started = time.time()
+        done = git(self.repo, "ls-remote", url, timeout=3)
+        server.close()
+        self.assertNotEqual(done.returncode, 0)
+        self.assertLess(time.time() - started, 15)
+
     def test_uncommitted_edit_counts_as_activity(self) -> None:
         before = read_repo(self.repo).last_activity
         time.sleep(1.1)

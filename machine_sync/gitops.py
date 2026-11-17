@@ -13,18 +13,40 @@ GIT = shutil.which("git") or r"C:\Program Files\Git\cmd\git.exe"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def git(repo: Path, *args: str, check: bool = False, input: str | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "GIT_REFLOG_ACTION": REFLOG_ACTION, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    done = subprocess.run([GIT, "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", creationflags=NO_WINDOW, env=env, input=input)
+NET_TIMEOUT_S = 90  # fetch, push, ls-remote: a stalled connection must not hold a run (or the launcher) for long
+NET = ("-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=20")  # give up on a transfer stuck below 1 KB/s
+
+
+def git(repo: Path, *args: str, check: bool = False, input: str | None = None,
+        timeout: float | None = None) -> subprocess.CompletedProcess:
+    """Run git in repo. GIT_OPTIONAL_LOCKS=0: reading the status never takes index.lock away from Stephen's own
+    commands. A call that outlives `timeout` is stopped and returns code 124."""
+    env = {**os.environ, "GIT_REFLOG_ACTION": REFLOG_ACTION, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+           "GIT_OPTIONAL_LOCKS": "0"}
+    cmd = [GIT, "-C", str(repo), *args]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                            errors="replace", creationflags=NO_WINDOW, env=env)
+    try:
+        stdout, stderr = proc.communicate(input, timeout=timeout)
+        done = subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        # git hands the network to a helper (git-remote-https) that keeps the pipes open: end the whole tree,
+        # or reading the pipes would wait forever
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, creationflags=NO_WINDOW)
+        try:
+            proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        done = subprocess.CompletedProcess(cmd, 124, "", f"timed out after {timeout:.0f} s")
     if check and done.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed in {repo}: {done.stderr.strip()[:500]}")
     return done
 
 
-def out(repo: Path, *args: str) -> str:
+def out(repo: Path, *args: str, timeout: float | None = None) -> str:
     """Stdout of a git call, stripped; empty when it failed."""
-    done = git(repo, *args)
+    done = git(repo, *args, timeout=timeout)
     return done.stdout.strip() if done.returncode == 0 else ""
 
 

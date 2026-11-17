@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .gitops import NO_WINDOW, RepoState, git, out, read_repo
+from .gitops import NET, NET_TIMEOUT_S, NO_WINDOW, RepoState, git, out, read_repo
 from .settings import Settings
 
 
@@ -67,13 +67,27 @@ def default_branch(repo: Path) -> str | None:
     return None
 
 
+def _worktree_of(repo: Path, branch: str) -> str:
+    """The other working folder that has `branch` checked out, or "" (a branch out elsewhere is never moved: that
+    folder's index would then undo the move with its next commit)."""
+    where = out(repo, "for-each-ref", "--format=%(worktreepath)", f"refs/heads/{branch}")
+    if not where:
+        return ""
+    try:
+        return "" if Path(where).resolve() == repo.resolve() else where
+    except OSError:
+        return where
+
+
 def ff_other_branches(repo: Path, current: str | None) -> list[str]:
-    """Fast-forward every local branch that is not checked out and is strictly behind its GitHub branch."""
+    """Fast-forward every local branch that is not checked out (here or in another worktree) and is strictly behind
+    its GitHub branch."""
     moved = []
-    refs = out(repo, "for-each-ref", "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)", "refs/heads")
+    refs = out(repo, "for-each-ref",
+               "--format=%(refname:short)%09%(upstream:short)%09%(upstream:track)%09%(worktreepath)", "refs/heads")
     for line in refs.splitlines():
-        name, up, track = (line.split("\t") + ["", ""])[:3]
-        if name == current or not up or track.strip() == "[gone]":
+        name, up, track, where = (line.split("\t") + ["", "", ""])[:4]
+        if name == current or not up or track.strip() == "[gone]" or where:
             continue
         old, new = out(repo, "rev-parse", f"refs/heads/{name}"), out(repo, "rev-parse", "--verify", "-q",
                                                                       f"refs/remotes/{up}")
@@ -87,7 +101,7 @@ def _ff_current(repo: Path, name: str, s: RepoState, r: RepoResult) -> None:
     if not s.branch or not s.upstream or s.upstream_gone or not s.upstream_head or s.upstream_head == s.head:
         return
     if _is_ancestor(repo, s.head, s.upstream_head):
-        done = git(repo, "merge", "--ff-only", "--quiet", s.upstream_head)
+        done = git(repo, "merge", "--ff-only", "--no-overwrite-ignore", "--quiet", s.upstream_head)
         if done.returncode != 0:
             r.warnings.append(f"{name}: could not update {s.branch} from GitHub ({_first_line(done.stderr)})")
     elif not _is_ancestor(repo, s.upstream_head, s.head):
@@ -100,6 +114,8 @@ def _first_line(text: str) -> str:
 
 def _move_to(repo: Path, branch: str, target: str) -> str | None:
     """Put the checkout on `branch` at `target` (a commit GitHub has). Returns why not, or None."""
+    if where := _worktree_of(repo, branch):
+        return f"branch {branch} is checked out in another worktree ({where}): left as is, not switched"
     local = out(repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}")
     if local and local != target and not _is_ancestor(repo, target, local):
         if not _is_ancestor(repo, local, target) and _local_only(repo, local) > 0:
@@ -140,7 +156,7 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
     if not (path / ".git").exists():
         r.line = "not on this PC"
         return r
-    fetched = git(path, "fetch", "--all", "--prune", "--quiet")
+    fetched = git(path, *NET, "fetch", "--all", "--prune", "--quiet", timeout=NET_TIMEOUT_S)
     s = read_repo(path)  # after the fetch: it may have pruned this branch's GitHub branch
     r.before = r.after = s.head
     r.state = s
@@ -155,7 +171,8 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
         notes.append("kept for today's daily run on this PC")
     elif s.uncommitted or s.unpushed or s.operation or running:
         notes += _working_parts(s, running)
-        _ff_current(path, repo, s, r)
+        if not running:  # never any Git move under a running daily task
+            _ff_current(path, repo, s, r)
         if peer and (peer.get("uncommitted") or peer.get("unpushed")):
             notes.append("work in progress on both PCs")
     else:
@@ -172,7 +189,7 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
                 notes.append(f"{who}'s commit is not on GitHub yet")
             elif s.branch == branch:
                 if s.head != target and _is_ancestor(path, s.head, target):
-                    done = git(path, "merge", "--ff-only", "--quiet", target)
+                    done = git(path, "merge", "--ff-only", "--no-overwrite-ignore", "--quiet", target)
                     if done.returncode != 0:
                         r.warnings.append(f"{repo}: could not follow {who} ({_first_line(done.stderr)})")
             else:

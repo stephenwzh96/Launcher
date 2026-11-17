@@ -82,6 +82,80 @@ class RunnerTest(TempDirCase):
         log = (self.desk.sync_dir / "sync.log").read_text(encoding="utf-8")
         self.assertEqual(log.count("laptop has 1 unpushed commit"), 1)
 
+    # ---- review fixes (final review of 17 Nov)
+    def _two_repo_pcs(self):
+        from msync.helpers import two_pcs as make
+
+        import shutil
+        shutil.rmtree(self.tmp / "two", ignore_errors=True)
+        return make(self.tmp / "two", ("Trend", "IBKR"))
+
+    def _handshake(self, desk, lap) -> None:
+        self.run_pc(desk)
+        syncthing(desk, lap)
+        self.run_pc(lap)
+        syncthing(lap, desk)
+
+    def test_one_repo_failing_does_not_stop_others(self) -> None:
+        from unittest import mock
+
+        from machine_sync import runner
+
+        desk, lap = self._two_repo_pcs()
+        self._handshake(desk, lap)
+        (lap.repo_path("IBKR") / "data").mkdir()
+        (lap.repo_path("IBKR") / "data" / "s.csv").write_text("s")
+        self.run_pc(lap)
+        syncthing(lap, desk)
+        real = runner.sync_code
+
+        def broken(cfg, repo, *a, **kw):
+            if repo == "Trend":
+                raise RuntimeError("boom")
+            return real(cfg, repo, *a, **kw)
+
+        with mock.patch.object(runner, "sync_code", broken):
+            text = self.run_pc(desk)
+        self.assertIn("boom", text)
+        self.assertTrue((desk.repo_path("IBKR") / "data" / "s.csv").exists())
+
+    def _sod_and_cycle(self, cfg) -> list[dict]:
+        sod = {"id": "sod", "claim": "daily", "cwd": str(cfg.repo_path("Trend")),
+               "cmd": ["python.exe", str(cfg.repo_path("Trend") / "tools" / "daily_cycle.py")]}
+        cycle = {"id": "cycle", "claim": "daily", "cwd": str(cfg.repo_path("IBKR")),
+                 "cmd": ["python.exe", "-m", "src.operations", "run", "--envelopes", str(cfg.repo_path("Trend") / "live")]}
+        return [sod, cycle]
+
+    def test_any_running_task_holds_all_daily_repos(self) -> None:
+        from machine_sync.procs import Proc
+
+        desk, lap = self._two_repo_pcs()
+        self._handshake(desk, lap)
+        (lap.repo_path("IBKR") / "data").mkdir()
+        (lap.repo_path("IBKR") / "data" / "settle.csv").write_text("s")
+        self.run_pc(lap)
+        syncthing(lap, desk)
+        tasks = self._sod_and_cycle(desk)
+        sod_running = [Proc(7, "python.exe", f"python.exe {desk.repo_path('Trend') / 'tools' / 'daily_cycle.py'}")]
+        run_once(desk, now=datetime.now() + timedelta(minutes=5), procs=sod_running, tasks=tasks)
+        self.assertFalse((desk.repo_path("IBKR") / "data" / "settle.csv").exists())  # Start of Day reads it
+
+    def test_process_list_failure_holds_daily_repos(self) -> None:
+        from unittest import mock
+
+        from machine_sync import runner
+
+        desk, lap = self._two_repo_pcs()
+        self._handshake(desk, lap)
+        (lap.repo_path("Trend") / "data").mkdir()
+        (lap.repo_path("Trend") / "data" / "p.csv").write_text("p")
+        self.run_pc(lap)
+        syncthing(lap, desk)
+        with mock.patch.object(runner, "processes", lambda: None):
+            text = run_once(desk, now=datetime.now() + timedelta(minutes=5), tasks=self._sod_and_cycle(desk))
+        self.assertFalse((desk.repo_path("Trend") / "data" / "p.csv").exists())
+        self.assertIn("could not list", text)
+
     def test_selftest_passes(self) -> None:
         self.assertEqual(main(["selftest"]), 0)
 
