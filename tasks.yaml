@@ -10,7 +10,11 @@
 # progress_file (optional): a JSON file the task keeps current while it runs (schema sod_progress/1, see progress.py);
 # the panel then shows the step, the time since its last output and its ETA (instead of expected_minutes), and turns
 # the task red when it stalls (no output for over 10 min) or is abandoned (its process gone). timezone: the clock of
-# the file's local times (deliver-by, the ETA shown).
+# the file's local times (deliver-by, the ETA shown) and of the reminder.
+# remind (optional): a banner on weekdays from the first `at` time (again at each later one) while today's run has not
+# started: no `record` for the decision date t ({t}: the weekday before today, Monday's is Friday), no run going here,
+# and no live run for t in the progress file. The latest start is taken from the preview's "start by HH:MM", if any.
+# Only a reminder: Start of Day stays started by hand (Trend DECISIONS 2026-10-27).
 
 - id: aijpmt1a-refresh
   label: MTFA Start of Day
@@ -24,6 +28,9 @@
   expected_minutes: 47  # shown only while the run has no progress file
   progress_file: ../Trend/AIJPMT1A_build/data/logs/sod_progress.json
   timezone: Australia/Sydney
+  remind:
+    at: ["11:00", "12:30"]
+    record: ../Trend/AIJPMT1A_build/data/logs/sod_{t}.json
 
 - id: ibkr-paper-cycle
   label: IBKR paper cycle

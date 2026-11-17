@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import progress
+import reminder
 from config import TaskConfig
 from process_control import pid_alive, send_ctrl_break
 
@@ -213,6 +214,22 @@ class TaskRunner:
         if not run:
             return ""
         return "\n".join(_tail(self.log_dir / run["log"]).splitlines()[-lines:])
+
+    def reminders(self, previews: dict[str, str], now: datetime | None = None) -> list[dict]:
+        """Start of Day reminders due now (reminder.py), for tasks with `remind`; `previews`: each task's preview
+        line, for its latest start."""
+        now = now or datetime.now(UTC)
+        out = []
+        with self.lock:
+            for task_id, task in self.tasks.items():
+                if not task.remind:
+                    continue
+                self._settle(task_id)
+                running = self.runs.get(task_id, {}).get("state") == "running"
+                prog = progress.read(task.resolved_progress_file())
+                if due := reminder.due(task, now, running, prog, previews.get(task_id, "")):
+                    out.append(due)
+        return out
 
     def _progress(self, task: TaskConfig, run: dict, now: datetime) -> dict | None:
         """The task's progress file, seen at `now`, when it is this run's: started while this run was going."""

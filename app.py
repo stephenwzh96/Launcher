@@ -6,6 +6,7 @@ folder's), so a trial run never touches the real task state."""
 import os
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -81,7 +82,15 @@ def _get_task(task_id: str) -> str:
 
 @app.get("/api/tasks")
 def task_status():
-    return RUNNER.status()
+    """Every task's state, and the Start of Day reminders due now (tasks.yaml `remind`), with the latest start from
+    today's preview line."""
+    today = datetime.now().date()
+    previews = {
+        task_id: answer["text"]
+        for task_id, (at, answer) in list(_previews.items())
+        if answer["ok"] and datetime.fromtimestamp(at).date() == today
+    }
+    return {**RUNNER.status(), "reminders": RUNNER.reminders(previews)}
 
 
 @app.post("/api/tasks/run-all")

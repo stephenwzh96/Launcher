@@ -1,9 +1,10 @@
 """Loads apps.yaml and tasks.yaml into typed config objects."""
+from datetime import time
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 MARCO_DIR = Path(__file__).resolve().parent.parent
 
@@ -38,6 +39,22 @@ class AppConfig(BaseModel):
     processes: list[ProcessConfig]
 
 
+class RemindConfig(BaseModel):
+    """A banner on weekdays when a task has not been started by these times (tasks.yaml `remind`). Only a banner
+    while the launcher is open: the task itself is still started by hand (Trend DECISIONS 2026-10-27)."""
+    at: list[str]  # "HH:MM" in the task's timezone: the banner shows from the first; Dismiss hides it until the next
+    # the file a run for decision date t leaves (relative to Marco/), with {t} for t as YYYY-MM-DD; t is the weekday
+    # before today in the task's timezone (Monday's is Friday). No banner once it exists.
+    record: str
+
+    @field_validator("at")
+    @classmethod
+    def _clock_times(cls, at: list[str]) -> list[str]:
+        for text in at:
+            time.fromisoformat(text)  # ValueError: not HH:MM
+        return at
+
+
 class TaskConfig(BaseModel):
     """A one-shot Start of Day job from tasks.yaml."""
     id: str
@@ -53,7 +70,8 @@ class TaskConfig(BaseModel):
     # optional: a JSON file the task keeps current while it runs (schema sod_progress/1, progress.py); relative to
     # Marco/ like cwd, or absolute
     progress_file: str | None = None
-    timezone: str | None = None  # the clock of the task's times (ETA, deliver-by); default this machine's
+    timezone: str | None = None  # the clock of the task's times (ETA, deliver-by, reminders); default this machine's
+    remind: RemindConfig | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
     def resolved_cwd(self) -> Path:
@@ -67,6 +85,10 @@ class TaskConfig(BaseModel):
 
     def resolved_progress_file(self) -> Path | None:
         return (MARCO_DIR / self.progress_file).resolve() if self.progress_file else None
+
+    def resolved_record(self, t: str) -> Path | None:
+        """The record a run for decision date t (YYYY-MM-DD) leaves, from `remind`."""
+        return (MARCO_DIR / self.remind.record.format(t=t)).resolve() if self.remind else None
 
 
 def load_apps(path: Path) -> list[AppConfig]:

@@ -64,6 +64,17 @@
   h1 { font: 600 22px/1.2 var(--cond); letter-spacing: -.005em; }
   .now, .count { font: 500 14px/1.2 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
 
+  /* The Start of Day reminder (tasks.yaml remind): amber from the first time, brick from the next. */
+  .remind {
+    display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap; margin-top: 1.25rem;
+    padding: .75rem .875rem .75rem 1rem; background: var(--surface);
+    border: 1px solid var(--rule); border-left: 4px solid var(--amber); border-radius: 4px;
+  }
+  .remind.again { border-left-color: var(--brick); }
+  .remind-text { flex: 1 1 20rem; font: 600 16px/1.35 var(--cond); }
+  .remind-note { display: block; font: 400 13px/1.4 var(--sans); color: var(--muted); }
+  .remind-actions { display: flex; align-items: center; gap: .25rem; }
+
   section { padding-top: 1.25rem; }
   section + section { margin-top: 1.5rem; border-top: 1px solid var(--rule); }
   .section-head { display: flex; align-items: center; gap: .75rem; min-height: 32px; margin-bottom: 1rem; }
@@ -228,6 +239,14 @@
     <p class="now" id="now"></p>
   </header>
 
+  <div class="remind" id="remind" role="status" hidden>
+    <p class="remind-text"><span id="remind-text"></span><span class="remind-note" id="remind-note"></span></p>
+    <div class="remind-actions">
+      <button type="button" class="btn link" id="remind-dismiss">Dismiss</button>
+      <button type="button" class="btn primary" id="remind-start">Start now</button>
+    </div>
+  </div>
+
   <section aria-labelledby="run-heading">
     <div class="section-head">
       <h2 id="run-heading">Today's run</h2>
@@ -305,6 +324,16 @@ async function init() {
   tick();
   setInterval(tick, 10000);
   $("#run-all").onclick = runAll;
+  $("#remind-dismiss").onclick = () => {
+    if (reminder) dismissed = `${reminder.task_id}|${reminder.t}|${reminder.slot}`;
+    $("#remind").hidden = true;
+    document.title = "Launcher";
+  };
+  $("#remind-start").onclick = () => {
+    if (!reminder) return;
+    $("#remind-start").disabled = true;
+    startTask(reminder.task_id);
+  };
   refreshTasks();
   renderApps(await (await fetch("/api/apps")).json());
   refresh();
@@ -473,6 +502,7 @@ async function refreshTasks() {
   stopGraceS = data.stop_grace_s;
   if (!tasks.length) $("#tasks").innerHTML = '<li class="empty">No tasks yet: add them to tasks.yaml.</li>';
   tasks.forEach(renderTask);
+  renderReminder(data.reminders);
   for (const t of tasks) {  // a run just ended: what is due has changed
     const state = t.run ? t.run.state : "none";
     if (t.has_preview && lastState[t.id] === "running" && state !== "running") loadPreview(t.id, true);
@@ -487,6 +517,31 @@ async function refreshTasks() {
   tick();
   for (const id of openLogs) await loadLog(id);
   taskTimer = setTimeout(refreshTasks, busy ? 2000 : 5000);
+}
+
+// Start of Day reminder (tasks.yaml remind): from the first reminder time on a weekday, until the day's record
+// exists or the task runs. Dismiss hides it until the next reminder time.
+let reminder = null;
+let dismissed = "";
+let reminderKey = null;  // null until the first refresh: the page's own preview check covers that one
+
+function renderReminder(list) {
+  reminder = (list || [])[0] || null;
+  const key = reminder ? `${reminder.task_id}|${reminder.t}|${reminder.slot}` : "";
+  const t = reminder && tasksById[reminder.task_id];
+  if (reminderKey !== null && key && key !== reminderKey && t && t.has_preview) loadPreview(t.id);  // a current latest start
+  reminderKey = key;
+  const show = Boolean(reminder) && key !== dismissed;
+  const box = $("#remind");
+  box.hidden = !show;
+  document.title = show ? "Start of Day not started · Launcher" : "Launcher";
+  if (!show) return;
+  box.classList.toggle("again", reminder.again);
+  if ($("#remind-text").textContent !== reminder.text) $("#remind-text").textContent = reminder.text;
+  const note = `Reminder of ${reminder.slot}: no record for ${reminder.t} yet, and no run going.`;
+  if ($("#remind-note").textContent !== note) $("#remind-note").textContent = note;
+  $("#remind-start").textContent = t ? `Start ${t.label}` : "Start now";
+  $("#remind-start").disabled = false;
 }
 
 async function loadLog(id) {

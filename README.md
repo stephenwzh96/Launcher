@@ -59,7 +59,10 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   expected_minutes: 5       # optional, shown while it runs
   preview_cmd: ["MyProject/.venv/Scripts/python.exe", "plan.py"]  # optional: its last output line (what today's run will do) is shown under the task
   progress_file: MyProject/logs/progress.json  # optional: see "Progress file" below
-  timezone: Australia/Sydney  # optional: the clock of the progress file's local times; default this machine's
+  timezone: Australia/Sydney  # optional: the clock of the progress file's local times and the reminder; default this machine's
+  remind:                   # optional: see "Reminder" below
+    at: ["11:00", "12:30"]
+    record: MyProject/logs/day_{t}.json
   env: {}                   # optional extra environment variables
 ```
 
@@ -74,6 +77,14 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   - A warning when the ETA is after the file's `deliver_by_local` (or the run is still going past it), and when
     the machine is on battery.
   A file is taken as this run's only if it started while this run was going, so yesterday's file is never shown.
+- **Reminder** (optional, `remind`): on a weekday in the task's `timezone`, from the first `at` time, a banner at the
+  top of the page says "<label> for <t> not started; latest start HH:MM" while all of these hold: no `record` file
+  for today's decision date t (`{t}` is t as YYYY-MM-DD: the weekday before today, Monday's is Friday), the launcher
+  is not running the task, and the progress file shows no live run for t. The latest start comes from the task's
+  preview line when it says "start by HH:MM", and is left out otherwise. The banner has a Start button; Dismiss hides
+  it until the next `at` time, when it comes back in red. The tab title changes too. It is only a reminder while the
+  page is open (no Windows notification, no scheduled task): MTFA Start of Day reminds at 11:00 and 12:30 Sydney
+  and is still started by hand (Trend DECISIONS 2026-10-27).
 - **Result**: exit code 0 is Done, anything else Failed.
 - **Order**: put a task after the ones it needs; Run all never starts a task after a failure.
 - Each run writes `logs/tasks/<id>_<time>.log`; the last run of every task is kept in `logs/tasks_state.json`, so
@@ -90,9 +101,11 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   forced), Run all, progress from the log, last run per task.
 - `progress.py` — reads a task's progress file: step, last output, ETA, stalled
   or abandoned.
+- `reminder.py` — whether a task's Start of Day reminder is due.
 - `app.py` — thin FastAPI layer: `/api/apps`, `/api/status`,
   `/api/start/{id}`, `/api/stop/{id}`; `/api/tasks`, `/api/tasks/run-all`,
-  `/api/tasks/{id}/start|stop|log`. Serves `static/index.html` at `/`.
+  `/api/tasks/{id}/start|stop|log|preview`; `/api/tasks` also lists the
+  reminders due. Serves `static/index.html` at `/`.
 - `static/index.html` — fetches `/api/apps` once to build the cards, then
   polls `/api/status` every 3s. No app-specific code in here.
 
