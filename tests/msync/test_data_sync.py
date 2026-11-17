@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from machine_sync.data_files import data_files
-from machine_sync.data_sync import load_state, read_note, sync_data
+from machine_sync.data_sync import load_state, read_alive, read_note, sync_data
 from msync.helpers import TempDirCase, run, syncthing, two_pcs
 
 SQLITE = b"SQLite format 3\x00" + b"\x00" * 84
@@ -80,6 +80,18 @@ class DataSyncTest(TempDirCase):
         self.write(self.lap, "data/a.csv", "1")
         self.pc_run(self.lap)  # no note from the desktop yet: it may already have every file
         self.assertEqual(self.outbox_files(self.lap), [])
+
+    def test_note_rewritten_only_when_it_changes(self) -> None:
+        note = self.lap.note_path("laptop")
+        before = note.stat().st_mtime_ns
+        self.pc_run(self.lap)  # nothing changed: only the small "alive" file is rewritten
+        self.assertEqual(note.stat().st_mtime_ns, before)
+        self.assertLess(read_alive(self.desk, "laptop"), self.clock)  # the desktop still has the handshake's
+        self.exchange()
+        self.assertEqual(read_alive(self.desk, "laptop"), self.clock)
+        self.write(self.lap, "data/a.csv", "1")
+        self.pc_run(self.lap)
+        self.assertGreater(note.stat().st_mtime_ns, before)
 
     def test_change_reaches_other_pc(self) -> None:
         self.synced("data/a.csv", "1")

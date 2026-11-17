@@ -70,6 +70,23 @@ def write_note(cfg: Settings, note: dict) -> None:
     _write_json(cfg.note_path(cfg.machine), note)
 
 
+def _alive_path(cfg: Settings, machine: str) -> Path:
+    return cfg.note_path(machine).with_name(f"{machine}.alive.json")
+
+
+def read_alive(cfg: Settings, machine: str) -> float | None:
+    """When `machine` last ran (its small heartbeat file, rewritten every run)."""
+    try:
+        return float(json.loads(_alive_path(cfg, machine).read_text(encoding="utf-8"))["written"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _same_note(a: dict | None, b: dict) -> bool:
+    return a is not None and {k: v for k, v in a.items() if k != "written"} == {
+        k: v for k, v in b.items() if k != "written"}
+
+
 def _key(v: dict) -> tuple[float, str]:
     return (v["t"], v["m"])
 
@@ -338,6 +355,9 @@ def sync_data(cfg: Settings, state: dict, peer_note: dict | None, now: float, fr
     res = import_from_peer(cfg, state, peer_note, set(frozen_repos), allow_deletes, now)
     res.exported = refresh_outbox(cfg, state, peer_note)
     _prune(cfg, state, now)
-    write_note(cfg, make_note(cfg, state, now, note_extra))
+    note = make_note(cfg, state, now, note_extra)
+    if not _same_note(read_note(cfg, cfg.machine), note):  # the note is large: Syncthing sends it only on change
+        write_note(cfg, note)
+    _write_json(_alive_path(cfg, cfg.machine), {"written": now})
     save_state(cfg, state)
     return res
