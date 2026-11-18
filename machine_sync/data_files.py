@@ -1,5 +1,6 @@
 """What counts as data: Git-ignored, non-secret files under the repos, plus the plain (non-repo) folders. Same rules
-as the trip sync, plus: PostgreSQL data folders, SQLite side files, lock files and Syncthing conflict copies."""
+as the trip sync, plus: PostgreSQL data folders, SQLite side files, lock files, Syncthing conflict copies, and files
+still being written (`.staging` folders, `.tmp`/`.partial`/`.part` files and folders)."""
 from __future__ import annotations
 
 import hashlib
@@ -12,12 +13,19 @@ from .settings import Settings
 
 SKIP_DIRS = {".git", ".venv", "venv", "env", "ENV", ".venv-ib", "node_modules", "__pycache__", ".pytest_cache",
              ".ruff_cache", ".mypy_cache", ".cache", ".vite", ".claude", ".workbuddy-ai", "logs", "htmlcov",
-             ".streamlit", ".idea", ".vscode", ".superpowers", ".stversions", ".stfolder"}
+             ".streamlit", ".idea", ".vscode", ".superpowers", ".stversions", ".stfolder",
+             ".staging"}  # .staging: where a job writes before it swaps the result in (Trend's live-update)
+# files (and folders) a job is still writing: half a file must never reach the other PC
+TEMP_SUFFIX = (".tmp", ".partial", ".part")
 SKIP_FILE = re.compile(r"""(?ix)^(
     \.env(\..*)? | .*\.env | token\.json | credentials.*\.json | secrets?\.toml | .*\.(pem|key|pfx|p12)
   | .*\.log | .*\.py[cod] | \.coverage | nul | thumbs\.db | \.ds_store | .*\.tsync-tmp | .*\.msync-tmp | ~syncthing~.*
-  | .*\.lock | .*-wal | .*-shm | .*-journal | .*\.sync-conflict-.* | \.stignore
+  | .*\.lock | .*-wal | .*-shm | .*-journal | .*\.sync-conflict-.* | \.stignore | .*\.(tmp|partial|part)
 )$""")
+
+
+def _skipped_dir(name: str) -> bool:
+    return name in SKIP_DIRS or name.endswith(".egg-info") or name.lower().endswith(TEMP_SUFFIX)
 SKIP_SUFFIX = ("config/local.yaml",)
 SQLITE_HEADER = b"SQLite format 3\x00"
 # The one kind of file in a logs folder that is data: Trend's Start of Day record of a day (`data/logs/sod_<t>.json`),
@@ -31,7 +39,7 @@ def skipped(rel: str) -> bool:
     if LOG_RECORDS.search(norm):
         return False
     parts = norm.split("/")
-    if any(p in SKIP_DIRS or p == ".." or p.endswith(".egg-info") for p in parts[:-1]):
+    if any(p == ".." or _skipped_dir(p) for p in parts[:-1]):
         return True
     return bool(SKIP_FILE.match(parts[-1])) or norm.lower().endswith(SKIP_SUFFIX)
 
@@ -42,7 +50,7 @@ def _walk(root: Path, base: Path):
             dirnames[:] = []
             continue
         # logs folders are walked only for their Start of Day records (skipped() drops everything else in them)
-        dirnames[:] = [d for d in dirnames if (d not in SKIP_DIRS or d == "logs") and not d.endswith(".egg-info")]
+        dirnames[:] = [d for d in dirnames if d == "logs" or not _skipped_dir(d)]
         for name in filenames:
             rel = (Path(dirpath) / name).relative_to(base).as_posix()
             if not skipped(rel):
@@ -70,7 +78,7 @@ def data_files(cfg: Settings) -> dict[str, Path]:
         for entry in filter(None, listing.split("\0")):
             if entry.endswith("/"):
                 name = entry.rstrip("/").split("/")[-1]
-                if name in SKIP_DIRS and name != "logs":  # a logs folder is walked for its Start of Day records only
+                if _skipped_dir(name) and name != "logs":  # a logs folder is walked for its Start of Day records only
                     continue
                 rels = _walk(root / entry, root)
             else:

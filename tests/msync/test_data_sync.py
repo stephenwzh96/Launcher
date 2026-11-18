@@ -427,3 +427,11 @@ class DataSyncTest(TempDirCase):
         self.write(self.desk, "data/r.csv", "restored", age=10 ** 6)  # an old copy put back
         self.cycle(self.desk, self.lap)
         self.assertEqual(self.read(self.lap, "data/r.csv"), "restored")
+
+    def test_files_still_being_written_are_not_data(self) -> None:
+        for rel in ("data/ok.csv", "live/targets/mtfa/.staging/envelope.json", "data/prices.csv.tmp",
+                    "data/big.zip.partial", "data/out.parquet.part", "data/ov.tmp/overlay.json",
+                    "data/.paper.json.abc123.TMP"):
+            self.write(self.lap, rel, "x")
+        (self.lap.repo_path("Trend") / ".gitignore").write_text("data/\n*.log\nlive/\n")
+        self.assertEqual(sorted(data_files(self.lap)), ["Trend/data/ok.csv"])
