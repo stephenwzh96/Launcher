@@ -121,6 +121,17 @@ class InStepTest(StartCheckCase):
             self.assert_refused(r, "could not check this (OSError: disk gone)")
             self.assertIsNone(r.start("sod", allow_unsynced=True))
 
+    def test_code_record_that_fails_says_so_in_the_claim_and_still_starts(self) -> None:
+        from unittest import mock
+
+        from machine_sync import startcheck
+
+        r = self.runner()
+        with mock.patch.object(startcheck, "code_record", side_effect=OSError("git gone")):
+            self.assertIsNone(r.start("sod"))
+        self.assertEqual(self.claimer.calls[0]["record"], ["heads unavailable (OSError: git gone)"])
+        self.assertEqual(r.runs["sod"]["state"], "running")
+
     def test_claim_message_carries_heads_old_readers_still_parse_it(self) -> None:
         from machine_sync.claims import claim, holder
 

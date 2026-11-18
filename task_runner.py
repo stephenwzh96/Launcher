@@ -282,7 +282,10 @@ class TaskRunner:
                 except Exception as err:  # noqa: BLE001 - a warning that cannot be worked out is itself one
                     warnings = [f"could not check for edited files ({type(err).__name__}: {err})"]
                 self.warnings[task_id] = warnings
-                record = startcheck.code_record(cfg, self._task_repos(cfg, task))  # into the claim: what it runs
+                try:  # into the claim: the code it runs on
+                    record = startcheck.code_record(cfg, self._task_repos(cfg, task))
+                except Exception as err:  # noqa: BLE001 - the record is for later reading: never stops a start
+                    record = [f"heads unavailable ({type(err).__name__}: {err})"]
                 if refused := self._check_claim(task, take_over, machine, record):
                     return refused
                 with self.lock:
