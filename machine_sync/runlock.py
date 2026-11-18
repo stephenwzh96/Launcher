@@ -67,10 +67,22 @@ def pid_alive(pid: int) -> bool:
         k32.CloseHandle(handle)
 
 
+def _boot_time() -> float | None:
+    """When this PC last started (Unix time); None when that cannot be read."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetTickCount64.restype = ctypes.c_ulonglong
+    return time.time() - k32.GetTickCount64() / 1000
+
+
 def _pid_holds(text: str, written: float) -> bool:
     """What the file says, judged as an older copy of this module would (no OS lock to go by): a live pid written
-    within STALE_S, and not a pid Windows has since handed to a process started after it was written; an empty or
-    unreadable file only while it is being written."""
+    within STALE_S, and not a pid Windows has since handed to a process started after it was written (when that
+    process's start cannot be read: not a file written before the PC last started); an empty or unreadable file only
+    while it is being written."""
     age = time.time() - written
     try:
         pid = int(text)
@@ -79,7 +91,10 @@ def _pid_holds(text: str, written: float) -> bool:
     if age >= STALE_S or not pid_alive(pid):
         return False
     started = _created(pid)
-    return started is None or started <= written + 2
+    if started is None:
+        boot = _boot_time()
+        return boot is None or written >= boot
+    return started <= written + 2
 
 
 def _os_lock(fd: int) -> bool:

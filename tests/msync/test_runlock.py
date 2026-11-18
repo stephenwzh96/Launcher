@@ -118,3 +118,26 @@ class OsLockTest(TempDirCase):
                     for _ in range(6)]
         said = [p.stdout.readline().strip() for p in starters]
         self.assertEqual(said.count("True"), 1, said)
+
+    def test_lock_from_before_the_last_boot_is_not_held(self) -> None:
+        """A pid whose start cannot be read (another user's process) holds only a lock written since boot (item 8)."""
+        from unittest import mock
+
+        from machine_sync import runlock
+
+        lock = self.tmp / "run.lock"
+        lock.write_text(str(os.getpid()))  # a live pid, and an older copy's file (no OS lock)
+        written = time.time() - 600
+        os.utime(lock, (written, written))
+        with mock.patch.object(runlock, "_created", lambda pid: None):
+            with mock.patch.object(runlock, "_boot_time", lambda: written - 60):  # written after the boot: held
+                self.assertFalse(acquire(self.tmp, wait_s=0.2))
+            with mock.patch.object(runlock, "_boot_time", lambda: written + 60):  # before it: a dead PC's lock
+                self.assertTrue(acquire(self.tmp))
+        release(self.tmp)
+
+    def test_boot_time_is_in_the_past(self) -> None:
+        from machine_sync.runlock import _boot_time
+
+        boot = _boot_time()
+        self.assertTrue(boot is None or boot < time.time())
