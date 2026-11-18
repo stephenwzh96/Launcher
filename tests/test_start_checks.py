@@ -217,5 +217,24 @@ class PendingDataTest(StartCheckCase):
         self.assertIsNone(self.runner().start("sod"))
 
 
+class PendingLibrariesTest(StartCheckCase):
+    """A daily start waits while the sync could not update the libraries of a repo the task uses (L13)."""
+
+    def pending(self, *apps: Path) -> None:
+        import json
+
+        (self.sync_dir / "pending_uv.json").write_text(json.dumps([str(a) for a in apps]))
+
+    def test_pending_libraries_in_the_tasks_repo_refuse_then_start_anyway(self) -> None:
+        self.pending(self.trend / "AIJPMT1A_build")
+        r = self.runner()
+        self.assert_refused(r, "Trend: the libraries of", "were not updated after its last code change")
+        self.assertIsNone(r.start("sod", allow_unsynced=True))
+
+    def test_pending_libraries_elsewhere_do_not(self) -> None:
+        self.pending(self.home / "Marco" / "FOMC")
+        self.assertIsNone(self.runner().start("sod"))
+
+
 if __name__ == "__main__":
     unittest.main()

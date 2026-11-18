@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .code_sync import _is_ancestor, default_branch
-from .daily import busy_repos
+from .code_sync import _is_ancestor, default_branch, pending_uv
+from .daily import _repo_of_path, busy_repos
 from . import NOTE_FORMAT
 from .data_sync import load_state, pending_from_peer, read_alive, read_note
 from .gitops import out, read_repo
@@ -28,10 +28,10 @@ def _ago(seconds: float) -> str:
     return f"{seconds / 3600:.1f} h ago"
 
 
-def task_repos(cfg: Settings, cwd: str, cmd: list[str]) -> list[str]:
-    """The repos a daily task uses (its folder and command line point into them) and the launcher's own, those on
-    this PC."""
-    repos = busy_repos(cfg, [{"cwd": cwd, "cmd": cmd}]) | {LAUNCHER_REPO}
+def task_repos(cfg: Settings, cwd: str, cmd: list[str], launcher: bool = True) -> list[str]:
+    """The repos a daily task uses (its folder and command line point into them) and the launcher's own (unless
+    launcher=False), those on this PC."""
+    repos = busy_repos(cfg, [{"cwd": cwd, "cmd": cmd}]) | ({LAUNCHER_REPO} if launcher else set())
     return sorted(r for r in repos if (cfg.repo_path(r) / ".git").exists())
 
 
@@ -75,6 +75,17 @@ def data_pending(cfg: Settings, repos: set[str]) -> str | None:
         return None
     return (f"the {cfg.peer}'s latest changes have not arrived yet ({_plural(len(waiting), 'file')}, e.g. "
             f"{waiting[0]}): wait for the next sync (every 5 minutes)")
+
+
+def libraries_pending(cfg: Settings, repos: list[str]) -> list[str]:
+    """One line per app folder in `repos` whose libraries the sync could not update after a code change (L13)."""
+    lines = []
+    for app in pending_uv(cfg):
+        repo = _repo_of_path(cfg, Path(app))
+        if repo in repos:
+            lines.append(f"{repo}: the libraries of {app} were not updated after its last code change (uv pip "
+                         "sync): see MachineSync\\sync_status.txt; each sync run tries again")
+    return lines
 
 
 def heads(cfg: Settings, repos: list[str]) -> dict[str, str]:

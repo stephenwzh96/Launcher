@@ -103,7 +103,8 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 - **In step before a daily start**: before claiming the day, the launcher checks every repo the task uses (from its
   folder and command line, and the launcher itself): on its default branch, no edited or staged tracked files, no
   commits missing from GitHub, not split from it (untracked files are fine); and every newer data file the other
-  PC's note lists in the daily tasks' repos has arrived here. Otherwise it refuses and says what
+  PC's note lists in the daily tasks' repos has arrived here; and the sync updated the task's libraries after
+  their last code change (`MachineSync\pending_uv.json` is empty for its repos). Otherwise it refuses and says what
   differs; **Start anyway** (the page asks) starts it regardless. The claim's commit message lists each repo's
   commit below its first line (`Trend <sha>`, `+edits` when started anyway with edits).
 

@@ -289,10 +289,9 @@ def after_move(cfg: Settings, repo: str, before: str, after: str, in_use: set[Pa
         if changed.endswith("requirements.lock.txt"):
             app = (path / folder).resolve()
             why = _uv_sync(app, in_use, uv_cmd)
-            if why:
+            if why:  # every failure waits in pending_uv.json: retried each run, and a daily start is refused meanwhile
                 lines.append(why)
-                if "close the app" in why or "uv was not found" in why:
-                    waiting.append(str(app))
+                waiting.append(str(app))
         elif changed.endswith("package-lock.json"):
             lines.append(f"{where}: package-lock.json changed: run npm ci in {where}")
         elif changed.endswith(".python-version"):
@@ -303,8 +302,13 @@ def after_move(cfg: Settings, repo: str, before: str, after: str, in_use: set[Pa
     return lines
 
 
+def pending_uv(cfg: Settings) -> list[str]:
+    """App folders whose libraries were not updated after a code change (MachineSync\\pending_uv.json)."""
+    return _load_pending(cfg)
+
+
 def retry_pending_uv(cfg: Settings, in_use: set[Path], uv_cmd: list[str] | None = None) -> list[str]:
-    """Libraries that waited for an app to close: try again."""
+    """Libraries not updated yet (an app had its .venv open, uv failed or was missing, no .venv): try again."""
     uv_cmd = uv_cmd if uv_cmd is not None else _default_uv()
     still, lines = [], []
     for app in _load_pending(cfg):

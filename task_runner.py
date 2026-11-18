@@ -171,8 +171,11 @@ class TaskRunner:
         """None when this PC is in step, else why not (start anyway: the page asks again and passes allow_unsynced):
         every repo the task uses (and the launcher) is on its default branch with nothing uncommitted in tracked
         files, nothing unpushed and nothing split from GitHub (H1); the other PC's newer data in the daily tasks'
-        repos has arrived (M7)."""
+        repos has arrived (M7); the sync updated the libraries of the task's repos after their last code change
+        (L13)."""
         lines = startcheck.code_problems(cfg, self._task_repos(cfg, task))
+        lines += startcheck.libraries_pending(cfg, startcheck.task_repos(cfg, str(task.resolved_cwd()),
+                                                                         task.resolved_cmd(), launcher=False))
         daily = {r for t in self.tasks.values() if t.claim for r in self._task_repos(cfg, t)}
         if waiting := startcheck.data_pending(cfg, daily):
             lines.append(waiting)

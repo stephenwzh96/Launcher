@@ -234,6 +234,22 @@ class CodeSyncTest(TempDirCase):
         sync_code(self.desk_cfg, "Trend", None, frozen=False, running=False, uv_cmd=uv)
         self.assertIn("pip sync --python", log.read_text())
 
+    def test_failed_uv_sync_waits_in_pending_and_is_retried(self) -> None:
+        from machine_sync.code_sync import pending_uv
+
+        venv_py = self.desk / ".venv" / "Scripts" / "python.exe"
+        venv_py.parent.mkdir(parents=True)
+        venv_py.write_text("")
+        broken = self.tmp / "broken_uv.py"
+        broken.write_text("import sys\nsys.stderr.write('resolution failed\\n')\nsys.exit(2)\n")
+        self._push_lock_change()
+        r = sync_code(self.desk_cfg, "Trend", None, frozen=False, running=False, uv_cmd=[sys.executable, str(broken)])
+        self.assertTrue(any("uv pip sync failed (resolution failed)" in w for w in r.warnings), r.warnings)
+        self.assertEqual(pending_uv(self.desk_cfg), [str(self.desk.resolve())])  # a daily start waits for it
+        uv, log = self._fake_uv()
+        self.assertEqual(retry_pending_uv(self.desk_cfg, in_use=set(), uv_cmd=uv), [])
+        self.assertEqual(pending_uv(self.desk_cfg), [])
+
     def test_lock_change_waits_while_venv_in_use(self) -> None:
         venv_py = self.desk / ".venv" / "Scripts" / "python.exe"
         venv_py.parent.mkdir(parents=True)
