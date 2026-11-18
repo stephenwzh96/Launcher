@@ -166,7 +166,7 @@ shows the same content, the outbox copy is removed. Nothing bounces back.
 | Busy repo with a daily task running, file changing right now, or tracked by this PC's Git | skip this run (the last stays flagged) |
 
 Every deletion is backed up. **Deletion brake:** more than max(50, 2% of files) deletions in one run are held and
-flagged; `machine_sync.py run --allow-deletes` lets them through. Backups older than 14 days are pruned.
+flagged; `machine_sync.py run --allow-deletes` lets them through. Backups older than 60 days are pruned (14 until 18 Nov 2026).
 
 Both PCs apply the same rule to the same two versions, so they converge; restoring a backup is a new change and
 wins.

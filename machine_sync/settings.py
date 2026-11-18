@@ -17,7 +17,7 @@ INTERVAL_MIN = 5
 STABLE_S = 60  # a file changed more recently than this is still being written: not exported or replaced
 BRAKE_MIN, BRAKE_FRACTION = 50, 0.02  # more deletions than max(these) in one run are held
 TOMBSTONE_DAYS = 30
-BACKUP_DAYS = 14
+BACKUP_DAYS = 60  # backups of clashes and deletions (MachineSync\backup\<date>)
 CLAIM_KEEP_DAYS = 30
 FREEZE_UNTIL_HOUR = 9  # the claim-holding PC's busy repos keep their code until 09:00 the day after the claim
 

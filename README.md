@@ -133,7 +133,7 @@ either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-desig
     left as it is and the status says why. Unpushed commits stay on their PC: push them to share.
   - data: Git-ignored data files move both ways through Syncthing (laptop `C:\Users\User\TripSync`, desktop
     `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs; a file changed on both, and
-    every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 14 days.
+    every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 60 days.
   - trading safety: while a daily task runs, nothing in Trend or IBKR changes on that PC; on the PC that holds the
     day's claim, their code stays fixed until 09:00 the next day.
 - **Status:** `C:\Users\User\MachineSync\sync_status.txt` (log: `sync.log`). It names the other PC's last run,

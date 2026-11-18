@@ -456,3 +456,14 @@ class DataSyncTest(TempDirCase):
             self.assertFalse((self.desk.home / rel).exists(), rel)
         self.assertTrue(any("4 files the laptop lists that this PC does not sync" in s for s in res.skipped),
                         res.skipped)
+
+    def test_backups_kept_sixty_days(self) -> None:
+        from datetime import datetime, timedelta
+
+        backups = self.desk.sync_dir / "backup"
+        now = datetime.fromtimestamp(self.clock)
+        for days in (30, 59, 62):
+            (backups / f"{now - timedelta(days=days):%Y-%m-%d}" / "Trend").mkdir(parents=True)
+        self.pc_run(self.desk)
+        kept = sorted(p.name for p in backups.iterdir())
+        self.assertEqual(kept, sorted(f"{now - timedelta(days=d):%Y-%m-%d}" for d in (30, 59)))
