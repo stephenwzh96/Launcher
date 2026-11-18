@@ -91,15 +91,16 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   "done today" survives a launcher restart. A task left running when the launcher restarted is followed by its pid
   and shows "result unknown" when it ends.
 - **One PC per day** (`claim: daily`): MTFA Start of Day and the IBKR paper cycle run on one PC per day. Before the
-  first of them starts, the launcher claims the day on GitHub (`refs/daily-claims/daily/<date>` in this repo; only
-  the first claim is accepted). The PC holding the claim can re-run its tasks and press the cycle again; the other PC
-  is refused ("already started on laptop at 09:41") and offered **Take over**, only for a run that ended or a PC that
-  is off. Take over is refused again while the other PC's sync says it ran in the last 15 minutes (it is on) or
-  was running a daily task when it last ran; a second, plainer confirmation takes over anyway. The day is Start of Day's date in Sydney; the cycle (`claim_day: "18:00 America/New_York"`) claims the trade
-  day it runs, which is the same day from its first press until 18:00 New York the next morning (10:00 Sydney from
-  November to March, 08:00 from April to October), so a press or restart after midnight does not take the next day. GitHub unreachable or the sync tool not installed (`MachineSync\machine.txt`): not started. The reminder is
-  not shown on the PC that does not hold the day. See `machine_sync/` and
-  `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
+  first of them starts, the launcher claims the day on GitHub (`refs/daily-claims/daily/<date>` in this repo; only the
+  first claim is accepted). The PC holding the claim can re-run its tasks and press the cycle again; the other PC is
+  refused ("already started on laptop at 09:41") and offered **Take over**, only for a run that ended or a PC that is
+  off. Take over is refused again while the other PC's sync says it ran in the last 15 minutes (it is on) or was
+  running a daily task when it last ran; a second, plainer confirmation takes over anyway. The day is Start of Day's
+  date in Sydney; the cycle (`claim_day: "18:00 America/New_York"`) claims the trade day it runs, which is the same
+  day from its first press until 18:00 New York the next morning (10:00 Sydney from November to March, 08:00 from
+  April to October), so a press or restart after midnight does not take the next day. GitHub unreachable or the sync
+  tool not installed (`MachineSync\machine.txt`): not started. The reminder is not shown on the PC that does not hold
+  the day. See `machine_sync/` and `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
 - **In step before a daily start**: before claiming the day, the launcher checks every repo the task uses (from its
   folder and command line, and the launcher itself): on its default branch, no edited or staged tracked files, no
   commits missing from GitHub, not split from it (untracked files are fine); and every newer data file the other
@@ -136,14 +137,14 @@ you started something manually, or the launcher itself restarted.
 either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
 
 - **What it does, every 5 minutes and at logon, unlock and wake** (Task Scheduler task "Machine sync"):
-  - code: fetches the 8 repos, fast-forwards every branch, and follows the branch and commit of the PC last worked
-    on (in Trend, IBKR and the launcher only on their default branch: a daily run never starts on a feature
-    branch it followed). It never commits, pushes, merges or forces; a repo with edits, unpushed commits or a daily task running is
-    left as it is and the status says why. Unpushed commits stay on their PC: push them to share.
+  - code: fetches the 8 repos, fast-forwards every branch, and follows the branch and commit of the PC last worked on
+    (in Trend, IBKR and the launcher only on their default branch: a daily run never starts on a feature branch it
+    followed). It never commits, pushes, merges or forces; a repo with edits, unpushed commits or a daily task running
+    is left as it is and the status says why. Unpushed commits stay on their PC: push them to share.
   - data: Git-ignored data files move both ways through Syncthing (laptop `C:\Users\User\TripSync`, desktop
-    `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs (newer by the versions' history, so a clock that is off
-    does not decide; the status warns when the two clocks differ by more than 30 s); a file changed on both, and
-    every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 60 days.
+    `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs (newer by the versions' history,
+    so a clock that is off does not decide; the status warns when the two clocks differ by more than 30 s); a file
+    changed on both, and every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 60 days.
   - trading safety: while a daily task runs (started from the launcher or from a terminal), nothing in Trend or
     IBKR changes on that PC; on the PC that holds the day's claim, their code stays fixed until 09:00 the next day.
 - **Status:** `C:\Users\User\MachineSync\sync_status.txt` (log: `sync.log`). It names the other PC's last run,
