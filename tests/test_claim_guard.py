@@ -6,10 +6,13 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from pydantic import ValidationError
 
 from config import RemindConfig, TaskConfig
 from machine_sync.claims import ClaimResult
-from task_runner import TaskRunner
+from task_runner import TaskRunner, claim_day
 
 
 class FakeClaimer:
@@ -119,3 +122,49 @@ class ClaimGuardTest(unittest.TestCase):
         (self.sync_dir / "daily_claim.json").write_text(json.dumps({"claims": [
             {"claim": "daily", "day": "2026-11-18", "holder": "laptop", "at": "2026-11-18T09:41:00"}]}))
         self.assertEqual(r.reminders({}, now=wednesday_noon), [])
+
+
+class ClaimDayTest(unittest.TestCase):
+    """The day a daily task claims is the day of the run the press belongs to: the IBKR paper cycle's second press
+    or a restart after midnight Sydney stays on the day its cycle began (tasks.yaml `claim_day`), instead of taking
+    the next day from the PC that runs that day's Start of Day."""
+    SYDNEY = ZoneInfo("Australia/Sydney")
+    US_CLOSE = "18:00 America/New_York"
+
+    def task(self, rule: str | None = None) -> TaskConfig:
+        return TaskConfig(id="paper", label="IBKR paper cycle", cwd=".", cmd=["x"], claim="daily",
+                          timezone="Australia/Sydney", claim_day=rule)
+
+    def at(self, *when: int) -> datetime:
+        return datetime(*when, tzinfo=self.SYDNEY)
+
+    def test_without_claim_day_the_task_claims_its_calendar_day(self) -> None:
+        self.assertEqual(claim_day(self.task(), self.at(2026, 11, 19, 0, 30)), "2026-11-19")
+
+    def test_press_after_midnight_stays_on_the_day_the_cycle_began(self) -> None:
+        paper = self.task(self.US_CLOSE)
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 18, 16, 0)), "2026-11-18")  # Wednesday's first press
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 19, 0, 30)), "2026-11-18")  # restart after midnight
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 19, 8, 20)), "2026-11-18")  # the night's reconcile
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 19, 16, 0)), "2026-11-19")  # Thursday's first press
+
+    def test_friday_night_and_monday(self) -> None:
+        paper = self.task(self.US_CLOSE)
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 21, 1, 0)), "2026-11-20")  # Saturday 01:00: Friday's
+        self.assertEqual(claim_day(paper, self.at(2026, 11, 23, 16, 0)), "2026-11-23")  # Monday's first press
+
+    def test_us_summer_time(self) -> None:  # 18:00 New York is 08:00 Sydney in July
+        paper = self.task(self.US_CLOSE)
+        self.assertEqual(claim_day(paper, self.at(2026, 7, 16, 7, 30)), "2026-07-15")
+        self.assertEqual(claim_day(paper, self.at(2026, 7, 16, 16, 0)), "2026-07-16")
+
+    def test_same_day_as_start_of_day_on_every_weekday(self) -> None:
+        paper, sod = self.task(self.US_CLOSE), self.task()
+        for day in range(16, 21):  # Monday 16 to Friday 20 November
+            self.assertEqual(claim_day(paper, self.at(2026, 11, day, 16, 0)),
+                             claim_day(sod, self.at(2026, 11, day, 9, 30)))
+
+    def test_bad_rule_refused_when_tasks_yaml_loads(self) -> None:
+        for rule in ("18:00", "6pm America/New_York", "18:00 America/Nowhere"):
+            with self.assertRaises(ValidationError, msg=rule):
+                self.task(rule)

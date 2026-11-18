@@ -15,12 +15,12 @@ import re
 import subprocess
 import threading
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import progress
 import reminder
-from config import TaskConfig
+from config import TaskConfig, claim_day_rule
 from machine_sync import claims as day_claims
 from machine_sync import runlock as sync_lock
 from machine_sync.daily import read_claims, record_claim
@@ -55,6 +55,32 @@ def _tail(path: Path, max_bytes: int = TAIL_BYTES) -> str:
             return f.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _weekday_back(day: date) -> date:
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def _next_weekday(day: date) -> date:
+    day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day
+
+
+def claim_day(task: TaskConfig, now: datetime) -> str:
+    """The day a press at `now` claims (YYYY-MM-DD). With `claim_day` ("18:00 America/New_York"): the trade day of
+    the run, the weekday after the latest weekday whose 18:00 New York has passed (IBKR's `default_trade_day`), so
+    the paper cycle's presses from its first (16:00 Sydney) to the night's reconcile (08:20) share Start of Day's
+    day. Otherwise today's date in the task's time zone."""
+    if not task.claim_day:
+        return now.astimezone(progress.zone(task.timezone)).strftime("%Y-%m-%d")
+    clock, zone = claim_day_rule(task.claim_day)
+    there = now.astimezone(zone)
+    decided = _weekday_back(there.date() - timedelta(days=0 if there.time() >= clock else 1))
+    return _next_weekday(decided).isoformat()
 
 
 def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool) -> day_claims.ClaimResult:
@@ -115,7 +141,7 @@ class TaskRunner:
             return None
 
     def _day(self, task: TaskConfig, now: datetime | None = None) -> str:
-        return (now or datetime.now(UTC)).astimezone(progress.zone(task.timezone)).strftime("%Y-%m-%d")
+        return claim_day(task, now or datetime.now(UTC))
 
     def _check_claim(self, task: TaskConfig, take_over: bool) -> str | None:
         """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""

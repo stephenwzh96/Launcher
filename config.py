@@ -2,6 +2,7 @@
 from datetime import time
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -37,6 +38,15 @@ class AppConfig(BaseModel):
     open_port: int
     group: str = ""  # the page lists dashboards under their group, in the order the groups first appear
     processes: list[ProcessConfig]
+
+
+def claim_day_rule(rule: str) -> tuple[time, ZoneInfo]:
+    """A tasks.yaml `claim_day` ("18:00 America/New_York") as its clock time and time zone; ValueError otherwise."""
+    clock, _, zone = rule.partition(" ")
+    try:
+        return time.fromisoformat(clock), ZoneInfo(zone.strip())
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        raise ValueError(f"claim_day {rule!r} is not 'HH:MM Area/City': {exc}") from None
 
 
 class RemindConfig(BaseModel):
@@ -75,7 +85,18 @@ class TaskConfig(BaseModel):
     # optional: tasks sharing a claim name run on one PC per day; the launcher claims the day on GitHub before the
     # first of them starts (machine_sync/claims.py) and refuses on the other PC
     claim: str | None = None
+    # optional, with `claim`: "HH:MM Area/City", the moment a weekday's run is decided. The task then claims the trade
+    # day its run belongs to (the weekday after the latest weekday whose HH:MM has passed there) instead of today's
+    # date, so a press after midnight stays on the day its run began. Without it: today's date in `timezone`.
+    claim_day: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("claim_day")
+    @classmethod
+    def _claim_day_rule(cls, rule: str | None) -> str | None:
+        if rule is not None:
+            claim_day_rule(rule)  # ValueError: the rule cannot be read; a wrong day would let both PCs run
+        return rule
 
     def resolved_cwd(self) -> Path:
         return (MARCO_DIR / self.cwd).resolve()
