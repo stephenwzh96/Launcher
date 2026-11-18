@@ -19,8 +19,9 @@ class FakeClaimer:
     def __init__(self, result: ClaimResult | None = None) -> None:
         self.result, self.calls = result, []
 
-    def __call__(self, task, day, machine, take_over):
+    def __call__(self, task, day, machine, take_over, heads=None):
         self.calls.append((task.id, day, machine, take_over))
+        self.heads = heads
         if self.result is None:
             raise AssertionError("no claim expected")
         return self.result
@@ -86,7 +87,7 @@ class ClaimGuardTest(unittest.TestCase):
         import time
 
         class SlowClaimer(FakeClaimer):
-            def __call__(self, task, day, machine, take_over):
+            def __call__(self, task, day, machine, take_over, heads=None):
                 time.sleep(2)
                 return ClaimResult(True, machine, "2026-11-17T09:41:00")
 

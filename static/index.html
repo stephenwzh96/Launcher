@@ -561,19 +561,29 @@ async function toggleLog(id) {
   else { openLogs.add(id); await loadLog(id); pre.scrollTop = pre.scrollHeight; }
 }
 
-async function startTask(id, takeOver = false) {
+// opts: what the user already agreed to after a refusal (each is asked once, then sent with every retry)
+async function startTask(id, opts = {}) {
   const t = tasksById[id];
-  if (!takeOver && t.done_today && !confirm(`${t.label} already finished today. Run it again?`)) return;
+  const retry = Object.keys(opts).length > 0;
+  if (!retry && t.done_today && !confirm(`${t.label} already finished today. Run it again?`)) return;
   $(`#task-${id} .start`).disabled = true;
-  const url = `/api/tasks/${id}/start${takeOver ? "?take_over=true" : ""}`;
+  const query = new URLSearchParams();
+  if (opts.takeOver) query.set("take_over", "true");
+  if (opts.allowUnsynced) query.set("allow_unsynced", "true");
+  const qs = query.toString();
+  const url = `/api/tasks/${id}/start${qs ? "?" + qs : ""}`;
   const data = await (await fetch(url, { method: "POST" })).json();
-  if (!data.ok && data.claimed_by && !takeOver) {
+  const said = (data.errors || []).join("\n");
+  if (!data.ok && data.offer === "take_over" && !opts.takeOver) {
     // another PC started today's daily run: taking over is only for a run that ended or a PC that is off
-    const ask = `${data.errors.join("\n")}\n\nTake over today's run from ${data.claimed_by} and start ${t.label} `
+    const ask = `${said}\n\nTake over today's run from ${data.claimed_by} and start ${t.label} `
       + "on this PC? Only do this if that PC's run has ended or that PC is off: two runs on one day can "
       + "send duplicate orders.";
-    if (confirm(ask)) return startTask(id, true);
-  } else if (!data.ok) alert(`Could not start ${t.label}:\n${data.errors.join("\n")}`);
+    if (confirm(ask)) return startTask(id, { ...opts, takeOver: true });
+  } else if (!data.ok && data.offer === "start_anyway" && !opts.allowUnsynced) {
+    // this PC is not in step with GitHub or the other PC: the run would not use the code and data on main
+    if (confirm(`${said}\n\nStart ${t.label} anyway?`)) return startTask(id, { ...opts, allowUnsynced: true });
+  } else if (!data.ok) alert(`Could not start ${t.label}:\n${said}`);
   refreshTasks();
 }
 

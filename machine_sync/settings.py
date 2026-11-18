@@ -10,6 +10,7 @@ DEFAULT_REPOS = (
     "Marco/Australia-Rates", "Marco/CB Pricer", "Marco/Curve", "Marco/FOMC", "Marco/launcher",
     "IBKR", "Trend", "FXMGT/JPMQFX01_build",
 )
+LAUNCHER_REPO = "Marco/launcher"  # tasks.yaml and this tool: on the daily tasks' side of every rule
 DEFAULT_PLAIN_ROOTS = {"FXMGT": ["JPMQFX01_build"]}  # folders that are not repos: all data, minus these sub-folders
 OUTBOX_NAMES = {"laptop": "TripSync", "desktop": "DesktopSync"}  # the laptop's keeps the trip sync's folder
 

@@ -23,7 +23,9 @@ import reminder
 from config import TaskConfig, claim_day_rule
 from machine_sync import claims as day_claims
 from machine_sync import runlock as sync_lock
+from machine_sync import startcheck
 from machine_sync.daily import read_claims, record_claim
+from machine_sync.settings import Settings, syncthing_folders
 from process_control import pid_alive, send_ctrl_break
 
 HERE = Path(__file__).resolve().parent
@@ -84,8 +86,9 @@ def claim_day(task: TaskConfig, now: datetime) -> str:
     return _next_weekday(decided).isoformat()
 
 
-def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool) -> day_claims.ClaimResult:
-    return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over)
+def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool,
+                     heads: dict[str, str] | None = None) -> day_claims.ClaimResult:
+    return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over, heads=heads)
 
 
 def _prune_on_github() -> None:
@@ -97,12 +100,15 @@ class TaskRunner:
                  claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None):
         self.tasks = {t.id: t for t in tasks}
         self.stop_grace_s = stop_grace_s
-        self.claimer = claimer  # (task, day, machine, take_over) -> ClaimResult
+        self.claimer = claimer  # (task, day, machine, take_over, heads=) -> ClaimResult
         # deletes old claims from GitHub after a claimed start, in the background; only beside the real claimer, so a
         # runner with a stand-in claimer (tests) never reaches GitHub
         self.pruner = pruner or (_prune_on_github if claimer is _claim_on_github else (lambda: None))
         self.sync_dir = Path(sync_dir)
         self.refusals: dict[str, str] = {}  # task id -> the PC holding today's claim, after a refused start
+        # task id -> what the page may offer after a refused start: "take_over" (another PC holds the day),
+        # "start_anyway" (this PC is not in step: allow_unsynced=True)
+        self.offers: dict[str, str] = {}
         self.start_lock = threading.Lock()
         self.sync_wait_s = SYNC_WAIT_S
         self.log_dir = log_dir / "tasks"
@@ -151,19 +157,37 @@ class TaskRunner:
     def _day(self, task: TaskConfig, now: datetime | None = None) -> str:
         return claim_day(task, now or datetime.now(UTC))
 
-    def _check_claim(self, task: TaskConfig, take_over: bool) -> str | None:
+    def _sync_cfg(self, machine: str) -> Settings:
+        """The sync's view of this PC: home is the folder above MachineSync (in tests, a temp folder)."""
+        home = self.sync_dir.parent
+        return Settings(home=home, machine=machine,
+                        syncthing_folders=syncthing_folders(home, os.environ.get("LOCALAPPDATA")))
+
+    def _task_repos(self, cfg: Settings, task: TaskConfig) -> list[str]:
+        return startcheck.task_repos(cfg, str(task.resolved_cwd()), task.resolved_cmd())
+
+    def _check_in_step(self, task: TaskConfig, cfg: Settings) -> str | None:
+        """None when every repo the task uses (and the launcher) is on its default branch with nothing uncommitted
+        in tracked files, nothing unpushed and nothing split from GitHub; else why not (start anyway: the page asks
+        again and passes allow_unsynced)."""
+        lines = startcheck.code_problems(cfg, self._task_repos(cfg, task))
+        if not lines:
+            return None
+        return (f"{task.label}: this PC's code is not what GitHub has on main, so today's run could not be "
+                "rebuilt from GitHub:\n" + "\n".join(f"- {ln}" for ln in lines)
+                + "\nCommit and push, or undo, then start again; or start anyway.")
+
+    def _check_claim(self, task: TaskConfig, take_over: bool, machine: str,
+                     heads: dict[str, str] | None = None) -> str | None:
         """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
-        machine = self._machine()
-        if not machine:
-            return (f"{task.label}: this PC has no sync tool installed ({self.sync_dir}\\machine.txt is missing), so "
-                    "it cannot check that the other PC has not started today's run; not started.")
         day = self._day(task)
-        res = self.claimer(task, day, machine, take_over)
+        res = self.claimer(task, day, machine, take_over, heads=heads)
         if res.ok:
             record_claim(self.sync_dir, task.claim, day, machine, res.at or datetime.now().isoformat(timespec="seconds"))
             return None
         if res.holder:
             self.refusals[task.id] = res.holder
+            self.offers[task.id] = "take_over"
             record_claim(self.sync_dir, task.claim, day, res.holder, res.at or "")
             when = f" at {res.at[11:16]}" if res.at and len(res.at) >= 16 else ""
             return (f"{task.label} for {day} was already started on {res.holder}{when}. "
@@ -176,28 +200,40 @@ class TaskRunner:
                    for c in read_claims(self.sync_dir))
 
     # ----- actions -----
-    def start(self, task_id: str, take_over: bool = False) -> str | None:
-        """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim.
-        A daily task starts only between sync runs (MachineSync\\run.lock, held while claiming and starting), so the
-        next sync run already sees it running. The claim goes to GitHub outside self.lock: the page's status stays
-        live meanwhile. Returns an error message on failure, else None."""
+    def start(self, task_id: str, take_over: bool = False, allow_unsynced: bool = False) -> str | None:
+        """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim, or
+        this PC is not in step (a repo the task uses is off its default branch, has edited tracked files, commits
+        not on GitHub or is split from it: allow_unsynced starts it anyway). A daily task starts only between sync
+        runs (MachineSync\\run.lock, held while claiming and starting), so the next sync run already sees it running.
+        The claim goes to GitHub outside self.lock: the page's status stays live meanwhile. Returns an error message
+        on failure, else None; self.offers says what the page may offer next."""
         task = self.tasks[task_id]
         with self.start_lock:  # one start at a time (the page and a Run all)
             with self.lock:
                 self._settle(task_id)
                 self.refusals.pop(task_id, None)
+                self.offers.pop(task_id, None)
                 if self.runs.get(task_id, {}).get("state") == "running":
                     return f"{task.label} is already running"
             if not task.claim:
                 with self.lock:
                     return self._spawn(task_id, task)
+            machine = self._machine()
+            if not machine:
+                return (f"{task.label}: this PC has no sync tool installed ({self.sync_dir}\\machine.txt is missing), "
+                        "so it cannot check that the other PC has not started today's run; not started.")
             if not sync_lock.acquire(self.sync_dir, wait_s=self.sync_wait_s):
                 pid = sync_lock.holder_pid(self.sync_dir)
                 return (f"{task.label}: this PC's sync is busy (MachineSync\\run.lock"
                         f"{f', process {pid}' if pid else ''}) and did not finish in {self.sync_wait_s:.0f} s; "
                         "not started. Try again in a minute.")
             try:
-                if refused := self._check_claim(task, take_over):
+                cfg = self._sync_cfg(machine)
+                if not allow_unsynced and (refused := self._check_in_step(task, cfg)):
+                    self.offers[task_id] = "start_anyway"
+                    return refused
+                heads = startcheck.heads(cfg, self._task_repos(cfg, task))  # into the claim: what the run ran
+                if refused := self._check_claim(task, take_over, machine, heads):
                     return refused
                 with self.lock:
                     failed = self._spawn(task_id, task)

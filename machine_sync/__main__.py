@@ -8,7 +8,7 @@ import sys
 from .settings import MACHINES, Settings
 
 MODULES = ("settings", "gitops", "code_sync", "data_files", "data_sync", "procs", "daily", "claims", "status",
-           "selfupdate", "install", "runlock", "runner")
+           "selfupdate", "install", "runlock", "runner", "startcheck")
 
 
 def selftest() -> int:

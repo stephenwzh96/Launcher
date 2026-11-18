@@ -13,7 +13,7 @@ from .daily import (busy_repos, code_frozen, load_daily_tasks, read_claims, reco
 from .data_sync import ImportResult, clock_skew, load_state, read_alive, read_note, sync_data
 from .procs import Proc, processes
 from .selfupdate import self_update
-from .settings import Settings
+from .settings import LAUNCHER_REPO, Settings
 from .status import log, render, write_status
 
 def _refresh_claims(cfg: Settings, tasks: list[dict], now: datetime) -> None:
@@ -72,11 +72,13 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
     names = {t["claim"] for t in tasks if t.get("claim")} or None
     frozen = code_frozen(cfg, now, names) and not update_frozen
     peer_repos = (peer_note or {}).get("repos") or {}
+    main_only = busy | {LAUNCHER_REPO}  # the daily tasks' repos and the launcher follow only the default branch
 
     def one(repo: str) -> RepoResult:
         try:
             return sync_code(cfg, repo, peer_repos.get(repo), frozen=frozen and repo in busy,
-                             running=repo in running_repos, in_use=in_use, uv_cmd=uv_cmd)
+                             running=repo in running_repos, in_use=in_use, uv_cmd=uv_cmd,
+                             default_only=repo in main_only)
         except Exception as err:  # noqa: BLE001 - one repo's trouble must not stop the others or the data
             return RepoResult(repo, line=f"error: {type(err).__name__}: {err}",
                               warnings=[f"{repo}: the code step failed ({type(err).__name__}: {err})"])

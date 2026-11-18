@@ -56,10 +56,11 @@ def holder(repo: Path, claim: str, day: str, timeout: float = NET_TIMEOUT_S) -> 
 
 
 def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = False, now: datetime | None = None,
-          lease: str | None = None, timeout: float = NET_TIMEOUT_S) -> ClaimResult:
+          lease: str | None = None, timeout: float = NET_TIMEOUT_S, heads: dict[str, str] | None = None) -> ClaimResult:
     """Claim `day` for this PC. ok: this PC holds it now. Refused: ok False with the holder. GitHub unreachable or
     too slow: ok False with an error (the caller must not start the task). take_over replaces the current claim only
-    if it is still `lease` (the claim this PC saw; read now when not given)."""
+    if it is still `lease` (the claim this PC saw; read now when not given). heads: the commit each repo the task
+    uses is on, written below the message's first line (which older readers parse) as "<repo> <sha>" lines."""
     at = (now or datetime.now()).isoformat(timespec="seconds")
     ref = ref_name(claim, day)
     if take_over and lease is None:
@@ -68,8 +69,11 @@ def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = Fals
             return seen
         lease = seen.sha or ""
     tree = git(repo, "mktree", input="")
+    message = f"daily claim {claim} {day} by {machine} at {at}"
+    if heads:
+        message += "\n\n" + "\n".join(f"{name} {sha}" for name, sha in sorted(heads.items()))
     commit = git(repo, *_IDENTITY, "commit-tree", "--no-gpg-sign", tree.stdout.strip(), "-m",
-                 f"daily claim {claim} {day} by {machine} at {at}") if tree.returncode == 0 else tree
+                 message) if tree.returncode == 0 else tree
     if commit.returncode != 0:
         return ClaimResult(False, error=f"could not make the claim ({_first_line(commit.stderr)})")
     sha = commit.stdout.strip()

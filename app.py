@@ -99,11 +99,14 @@ def run_all_tasks():
 
 
 @app.post("/api/tasks/{task_id}/start")
-def start_task(task_id: str, take_over: bool = False):
-    """Starts a task. A daily task (tasks.yaml `claim`) another PC already started today is refused with
-    `claimed_by`; the page then offers to take over (take_over=true)."""
-    err = RUNNER.start(_get_task(task_id), take_over=take_over)
-    return {"ok": err is None, "errors": [err] if err else [], "claimed_by": RUNNER.refusals.get(task_id) if err else None}
+def start_task(task_id: str, take_over: bool = False, allow_unsynced: bool = False):
+    """Starts a task. A refused daily task (tasks.yaml `claim`) says what the page may offer next (`offer`):
+    "take_over" when another PC already started today (`claimed_by`; then take_over=true), "start_anyway" when this
+    PC is not in step (then allow_unsynced=true)."""
+    err = RUNNER.start(_get_task(task_id), take_over=take_over, allow_unsynced=allow_unsynced)
+    return {"ok": err is None, "errors": [err] if err else [],
+            "claimed_by": RUNNER.refusals.get(task_id) if err else None,
+            "offer": RUNNER.offers.get(task_id) if err else None}
 
 
 @app.post("/api/tasks/{task_id}/stop")

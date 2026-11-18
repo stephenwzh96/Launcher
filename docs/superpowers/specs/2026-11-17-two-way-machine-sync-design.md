@@ -188,6 +188,11 @@ wins.
 - Before starting such a task, the launcher pushes a claim to the launcher's GitHub repo:
   `refs/daily-claims/<claim>/<YYYY-MM-DD>` → a commit with no parent whose message names the PC and time. GitHub
   accepts only the first (a second, unrelated commit is not a fast-forward), so two PCs cannot both claim.
+- Before claiming (18 Nov 2026 review): every repo the task uses, and the launcher, must be on its default branch
+  with no edited tracked files, no unpushed commits and nothing split from GitHub (`machine_sync/startcheck.py`,
+  local checks only); else refuse and offer **Start anyway** (`allow_unsynced`). The claim's commit message lists
+  each repo's HEAD below its first line. The code step follows the other PC in these repos only on their default
+  branch.
 - Claim already held by this PC: start (re-runs and the cycle's second press work). Held by the other PC: refuse
   with "already started on laptop at 10:02". Not reachable: refuse ("could not check GitHub").
 - **Take over** (button after the refusal, with a warning to use it only if the other PC's run ended or it is off):

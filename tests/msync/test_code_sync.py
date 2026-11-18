@@ -38,6 +38,21 @@ class CodeSyncTest(TempDirCase):
         self.assertEqual((s.branch, s.head, s.upstream), ("feature", head, "origin/feature"))
         self.assertTrue(r.moved)
 
+    def test_daily_task_repo_follows_only_the_default_branch(self) -> None:
+        """Trend, IBKR and the launcher never follow the other PC onto a feature branch: a daily run must not start on
+        code that is not on main (review of 18 Nov, H1)."""
+        self.push_feature()
+        r = sync_code(self.desk_cfg, "Trend", self.lap_note(), frozen=False, running=False, default_only=True)
+        self.assertEqual(read_repo(self.desk).branch, "main")
+        self.assertFalse(r.moved)
+        self.assertIn("laptop is on feature: not followed, this repo follows only main", r.line)
+
+    def test_daily_task_repo_still_follows_on_the_default_branch(self) -> None:
+        head = commit(self.lap, "m.txt", "on main", push=True)
+        r = sync_code(self.desk_cfg, "Trend", self.lap_note(), frozen=False, running=False, default_only=True)
+        self.assertEqual((read_repo(self.desk).branch, read_repo(self.desk).head), ("main", head))
+        self.assertTrue(r.moved)
+
     def test_does_not_follow_older_activity(self) -> None:
         self.push_feature()
         note = self.lap_note()

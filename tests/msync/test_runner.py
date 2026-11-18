@@ -149,6 +149,25 @@ class RunnerTest(TempDirCase):
         run_once(desk, now=datetime.now() + timedelta(minutes=5), procs=sod_running, tasks=tasks)
         self.assertFalse((desk.repo_path("IBKR") / "data" / "settle.csv").exists())  # Start of Day reads it
 
+    def test_daily_task_repos_do_not_follow_a_feature_branch(self) -> None:
+        import time
+
+        desk, lap = self._two_repo_pcs()
+        self._handshake(desk, lap)
+        time.sleep(1.1)
+        for repo in ("Trend", "IBKR"):
+            run(lap.repo_path(repo), "switch", "-c", "feature")
+            commit(lap.repo_path(repo), "f.txt", "f")
+            run(lap.repo_path(repo), "push", "-u", "origin", "feature")
+        tasks = [{"id": "sod", "claim": "daily", "cwd": str(desk.repo_path("Trend")),
+                  "cmd": ["python.exe", str(desk.repo_path("Trend") / "tools" / "daily_cycle.py")]}]
+        run_once(lap, now=datetime.now() + timedelta(minutes=5), procs=[], tasks=[])
+        syncthing(lap, desk)
+        text = run_once(desk, now=datetime.now() + timedelta(minutes=5), procs=[], tasks=tasks)
+        self.assertEqual(read_repo(desk.repo_path("Trend")).branch, "main")  # the daily task's repo
+        self.assertEqual(read_repo(desk.repo_path("IBKR")).branch, "feature")  # not used by these tasks
+        self.assertIn("follows only main", text)
+
     def test_process_list_failure_holds_daily_repos(self) -> None:
         from unittest import mock
 

@@ -99,6 +99,11 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   November to March, 08:00 from April to October), so a press or restart after midnight does not take the next day. GitHub unreachable or the sync tool not installed (`MachineSync\machine.txt`): not started. The reminder is
   not shown on the PC that does not hold the day. See `machine_sync/` and
   `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
+- **In step before a daily start**: before claiming the day, the launcher checks every repo the task uses (from its
+  folder and command line, and the launcher itself): on its default branch, no edited or staged tracked files, no
+  commits missing from GitHub, not split from it (untracked files are fine). Otherwise it refuses and says what
+  differs; **Start anyway** (the page asks) starts it regardless. The claim's commit message lists each repo's
+  commit below its first line (`Trend <sha>`, `+edits` when started anyway with edits).
 
 ## How it works
 
@@ -129,7 +134,8 @@ either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-desig
 
 - **What it does, every 5 minutes and at logon, unlock and wake** (Task Scheduler task "Machine sync"):
   - code: fetches the 8 repos, fast-forwards every branch, and follows the branch and commit of the PC last worked
-    on. It never commits, pushes, merges or forces; a repo with edits, unpushed commits or a daily task running is
+    on (in Trend, IBKR and the launcher only on their default branch: a daily run never starts on a feature
+    branch it followed). It never commits, pushes, merges or forces; a repo with edits, unpushed commits or a daily task running is
     left as it is and the status says why. Unpushed commits stay on their PC: push them to share.
   - data: Git-ignored data files move both ways through Syncthing (laptop `C:\Users\User\TripSync`, desktop
     `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs (newer by the versions' history, so a clock that is off

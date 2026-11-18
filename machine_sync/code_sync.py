@@ -150,7 +150,10 @@ def _working_parts(s: RepoState, running: bool) -> list[str]:
 
 
 def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running: bool,
-              in_use: set[Path] | frozenset = frozenset(), uv_cmd: list[str] | None = None) -> RepoResult:
+              in_use: set[Path] | frozenset = frozenset(), uv_cmd: list[str] | None = None,
+              default_only: bool = False) -> RepoResult:
+    """default_only: a repo the daily tasks run from (and the launcher): it follows the other PC only on the default
+    branch, never onto a feature branch, so a daily run never starts on code that is not on main."""
     path = cfg.repo_path(repo)
     r = RepoResult(repo)
     if not (path / ".git").exists():
@@ -178,7 +181,12 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
     else:
         leads = bool(peer) and peer.get("last_activity", 0) > s.last_activity and peer.get("head") != s.head
         branch = peer.get("branch") if leads else None
-        if leads and branch and _remote_head(path, branch):
+        default = default_branch(path) if leads and branch and default_only else None
+        if default and branch != default:
+            notes.append(f"{who} is on {branch}: not followed, this repo follows only {default} (daily tasks run "
+                         "from it)")
+            _ff_current(path, repo, s, r)
+        elif leads and branch and _remote_head(path, branch):
             if _on_github(path, peer.get("head")):
                 target = peer["head"]
             elif _on_github(path, peer.get("upstream_head")):
