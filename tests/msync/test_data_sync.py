@@ -435,3 +435,24 @@ class DataSyncTest(TempDirCase):
             self.write(self.lap, rel, "x")
         (self.lap.repo_path("Trend") / ".gitignore").write_text("data/\n*.log\nlive/\n")
         self.assertEqual(sorted(data_files(self.lap)), ["Trend/data/ok.csv"])
+
+    def test_receiver_ignores_paths_its_own_rules_exclude(self) -> None:
+        import json
+
+        from machine_sync.data_files import hash_file
+
+        note = read_note(self.desk, "laptop")  # as an older tool on the laptop would list them
+        rels = ("Trend/data/half.csv.tmp", "Trend/live/.staging/envelope.json", "Trend/data/logs/fetch_status.json",
+                "Trend/data/.env")
+        for rel in rels:
+            staged = self.desk.peer_outbox / rel
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            staged.write_text("from the laptop")
+            note["files"][rel] = [hash_file(staged), self.clock + 999, "laptop", {"laptop": self.clock + 999}, False]
+        self.desk.note_path("laptop").write_text(json.dumps(note))
+        (self.desk.repo_path("Trend") / ".gitignore").write_text("data/\n*.log\nlive/\n.env\n")
+        res = self.pc_run(self.desk)
+        for rel in rels:
+            self.assertFalse((self.desk.home / rel).exists(), rel)
+        self.assertTrue(any("4 files the laptop lists that this PC does not sync" in s for s in res.skipped),
+                        res.skipped)

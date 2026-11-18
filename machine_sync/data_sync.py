@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import NOTE_FORMAT
-from .data_files import SKIP_DIRS, data_files, hash_file, is_sqlite, sqlite_open
+from .data_files import data_files, hash_file, is_sqlite, skipped, sqlite_open
 from .gitops import git
 from .settings import BACKUP_DAYS, BRAKE_FRACTION, BRAKE_MIN, STABLE_S, TOMBSTONE_DAYS, Settings
 
@@ -277,10 +277,13 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     entries, unstable = state["files"], set(state["unstable"])
     candidates = []
     managed = _managed_folders(cfg)
-    held_by_syncthing = 0
+    held_by_syncthing, excluded = 0, []
     for rel, raw in ((peer_note or {}).get("files") or {}).items():
         if not _safe_rel(cfg, rel):
             res.skipped.append(f"{rel!r}: not inside a synced folder on this PC, ignored")
+            continue
+        if skipped(rel):  # this PC's own rules say it is not data (an older tool on the other PC may still send it)
+            excluded.append(rel)
             continue
         if managed and _under(cfg.home / rel, managed):
             held_by_syncthing += 1  # Syncthing brings it straight from its own writer (the VPS for settlements)
@@ -296,6 +299,9 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
         candidates.append((rel, p, e))
     if held_by_syncthing:
         res.skipped.append(f"{held_by_syncthing} files in folders this PC's Syncthing gets directly from their source")
+    if excluded:
+        res.skipped.append(f"{len(excluded)} files the {cfg.peer} lists that this PC does not sync (temporary, secret "
+                           f"or excluded), ignored: e.g. {sorted(excluded)[0]}")
     allowed = _ignored_here(cfg, [rel for rel, _, _ in candidates])
     takes, deletes = [], []
     for rel, p, e in candidates:
