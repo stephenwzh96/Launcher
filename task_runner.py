@@ -73,8 +73,9 @@ def _next_weekday(day: date) -> date:
 def claim_day(task: TaskConfig, now: datetime) -> str:
     """The day a press at `now` claims (YYYY-MM-DD). With `claim_day` ("18:00 America/New_York"): the trade day of
     the run, the weekday after the latest weekday whose 18:00 New York has passed (IBKR's `default_trade_day`), so
-    the paper cycle's presses from its first (16:00 Sydney) to the night's reconcile (08:20) share Start of Day's
-    day. Otherwise today's date in the task's time zone."""
+    the paper cycle's presses from its first (16:00 Sydney) until 18:00 New York the next morning share Start of
+    Day's day. That is 10:00 Sydney from November to March but 08:00 from April to October (09:00 in the weeks
+    between): nothing here assumes the reconcile's time. Otherwise today's date in the task's time zone."""
     if not task.claim_day:
         return now.astimezone(progress.zone(task.timezone)).strftime("%Y-%m-%d")
     clock, zone = claim_day_rule(task.claim_day)

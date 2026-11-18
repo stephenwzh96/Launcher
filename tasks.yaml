@@ -43,6 +43,8 @@
   cmd: ["../IBKR/.venv/Scripts/python.exe", "-m", "src.operations", "run", "--mode", "paper", "--envelopes", "../Trend/AIJPMT1A_build/live/targets"]
   claim: daily  # runs on the PC that ran today's Start of Day (it reads that PC's envelopes)
   # its presses claim the trade day they run (IBKR's default_trade_day), not the date: a press or restart after
-  # midnight Sydney stays on the day its cycle began instead of taking the next day from the other PC
+  # midnight Sydney stays on the day its cycle began, until 18:00 New York the next morning. In Sydney that is 10:00
+  # from November to March but 08:00 from April to October (09:00 in the weeks when only one city is on summer
+  # time), so in the southern winter a restart after 08:00 claims the next trade day.
   claim_day: "18:00 America/New_York"
   again_label: Start trading  # the second press, once the first has built the list (the button says Rerun otherwise)
