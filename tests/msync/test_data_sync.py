@@ -467,3 +467,55 @@ class DataSyncTest(TempDirCase):
         self.pc_run(self.desk)
         kept = sorted(p.name for p in backups.iterdir())
         self.assertEqual(kept, sorted(f"{now - timedelta(days=d):%Y-%m-%d}" for d in (30, 59)))
+
+    def _tombstone_on_laptop(self, rel: str) -> None:
+        self.synced(rel, "x")
+        self.path(self.lap, rel).unlink()
+        self.pc_run(self.lap)
+        self.pc_run(self.lap)  # missing on two runs: a deletion
+        self.assertTrue(load_state(self.lap)["files"][f"Trend/{rel}"]["del"])
+
+    def test_tombstone_kept_until_other_pc_shows_the_deletion(self) -> None:
+        self._tombstone_on_laptop("data/t.csv")
+        self.clock += 31 * 86400  # the desktop was off for a month: its note still shows the file
+        self.pc_run(self.lap)
+        self.assertIn("Trend/data/t.csv", load_state(self.lap)["files"])
+        self.exchange()
+        self.pc_run(self.desk)  # back on: the deletion arrives instead of the file coming back
+        self.assertFalse(self.path(self.desk, "data/t.csv").exists())
+        self.exchange()
+        self.pc_run(self.lap)  # the desktop's note now shows it deleted: the tombstone can go
+        self.assertNotIn("Trend/data/t.csv", load_state(self.lap)["files"])
+
+    def test_tombstone_dropped_after_ninety_days_regardless(self) -> None:
+        self._tombstone_on_laptop("data/u.csv")
+        self.clock += 91 * 86400
+        self.pc_run(self.lap)
+        self.assertNotIn("Trend/data/u.csv", load_state(self.lap)["files"])
+
+    def test_day_brake_holds_many_small_batches(self) -> None:
+        from datetime import datetime
+
+        from machine_sync.status import render
+
+        self.clock = datetime(2026, 11, 18, 9, 0).timestamp()  # one day: no midnight inside this test
+        for i in range(200):
+            self.write(self.lap, f"data/m{i:03}.csv", str(i))
+        self.cycle(self.lap, self.desk)
+        for batch in range(4):  # 40 a time: under one run's brake, 160 in the day
+            for i in range(batch * 40, batch * 40 + 40):
+                self.path(self.lap, f"data/m{i:03}.csv").unlink()
+            self.pc_run(self.lap)
+            self.pc_run(self.lap)
+            self.exchange()
+            res = self.pc_run(self.desk)
+            if batch < 3:
+                self.assertEqual((res.deleted, res.held_deletes), (40, 0))
+        self.assertEqual((res.deleted, res.held_deletes, res.held_today, res.day_limit), (0, 40, 120, 150))
+        self.assertEqual(len(list(self.path(self.desk, "data").glob("m*.csv"))), 80)
+        text = render(self.desk, datetime.fromtimestamp(self.clock), [], res, load_state(self.desk), None, [], [])
+        self.assertIn("40 deletions from laptop held back: with the 120 already taken today they pass the day's "
+                      "limit of 150", text)
+        res = self.pc_run(self.desk, allow_deletes=True)
+        self.assertEqual(res.deleted, 40)
+        self.assertEqual(load_state(self.desk)["deleted_today"]["n"], 160)

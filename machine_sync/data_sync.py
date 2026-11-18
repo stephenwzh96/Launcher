@@ -16,7 +16,8 @@ from pathlib import Path
 from . import NOTE_FORMAT
 from .data_files import data_files, hash_file, is_sqlite, skipped, sqlite_open
 from .gitops import git
-from .settings import BACKUP_DAYS, BRAKE_FRACTION, BRAKE_MIN, STABLE_S, TOMBSTONE_DAYS, Settings
+from .settings import (BACKUP_DAYS, BRAKE_DAY_FRACTION, BRAKE_DAY_MIN, BRAKE_FRACTION, BRAKE_MIN, STABLE_S,
+                       TOMBSTONE_DAYS, TOMBSTONE_MAX_DAYS, Settings)
 
 OUTBOX_OWN = {"_state", "_tools", ".stfolder", ".stignore", ".stversions"}  # never data, never removed
 CLASH_KEEP_DAYS = 7
@@ -31,6 +32,9 @@ class ImportResult:
     clashes: list[str] = field(default_factory=list)
     held_deletes: int = 0
     exported: int = 0
+    # set when the day's brake (not the run's) held them: deletions already taken today, and the day's limit
+    held_today: int | None = None
+    day_limit: int = 0
 
 
 # ----------------------------------------------------------------- state and notes
@@ -197,11 +201,27 @@ def _root_of(cfg: Settings, rel: str) -> Path | None:
 
 
 # ----------------------------------------------------------------- scan this PC
-def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozenset()) -> dict:
+def _tombstone_done(e: dict, peer_raw, now: float) -> bool:
+    """A deletion can leave the note: TOMBSTONE_DAYS old and the other PC's note shows the path deleted too, or
+    TOMBSTONE_MAX_DAYS old. Dropped any sooner, a PC that was off for weeks would bring the file back."""
+    age = now - e["t"]
+    if age > TOMBSTONE_MAX_DAYS * 86400:
+        return True
+    if age <= TOMBSTONE_DAYS * 86400 or peer_raw is None:
+        return False
+    try:
+        return _version(peer_raw)["del"]
+    except (IndexError, TypeError):
+        return False
+
+
+def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozenset(),
+         peer_note: dict | None = None) -> dict:
     """Record this PC's changes. A file still being written (changed in the last STABLE_S seconds) or unreadable is
     left for a later run. A file is deleted only when it has been missing on two runs at least STABLE_S apart (a
     job rewriting its output folder is not a deletion), and never in a repo a daily task is using right now."""
     files = data_files(cfg)
+    peer_files = (peer_note or {}).get("files") or {}
     entries, unstable, errors, missing = state["files"], [], [], state["missing"]
     for rel, path in files.items():
         missing.pop(rel, None)
@@ -227,7 +247,7 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
                         "size": st.st_size, "mt": st.st_mtime_ns}
     for rel, e in list(entries.items()):
         if e["del"]:
-            if now - e["t"] > TOMBSTONE_DAYS * 86400:
+            if _tombstone_done(e, peer_files.get(rel), now):
                 del entries[rel]
             continue
         if rel in files:
@@ -386,8 +406,15 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
             continue
         takes.append((rel, p, clash, staged))
     live = sum(1 for e in entries.values() if not e["del"])
-    if len(deletes) > max(BRAKE_MIN, BRAKE_FRACTION * live) and not allow_deletes:
-        res.held_deletes, deletes = len(deletes), []
+    day = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+    record = state.get("deleted_today") or {}
+    done_today = int(record.get("n") or 0) if record.get("day") == day else 0
+    day_limit = int(max(BRAKE_DAY_MIN, BRAKE_DAY_FRACTION * live))
+    if deletes and not allow_deletes:
+        if len(deletes) > max(BRAKE_MIN, BRAKE_FRACTION * live):  # one run's brake
+            res.held_deletes, deletes = len(deletes), []
+        elif done_today + len(deletes) > day_limit:  # the day's: many small batches add up
+            res.held_deletes, res.held_today, res.day_limit, deletes = len(deletes), done_today, day_limit, []
     for rel, p, clash, staged in takes:
         if _changed_since_scan(cfg, rel, entries.get(rel)):
             res.skipped.append(f"{rel}: changed on this PC during this run, next run decides")
@@ -416,6 +443,7 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
         res.deleted += 1
         if clash:
             _record_clash(state, res, rel, p, backup, now)
+    state["deleted_today"] = {"day": day, "n": done_today + res.deleted}  # older tools keep the key as it is
     return res
 
 
@@ -550,7 +578,7 @@ def sync_data(cfg: Settings, state: dict, peer_note: dict | None, now: float, fr
               allow_deletes: bool = False, note_extra: dict | None = None) -> ImportResult:
     """Scan, import the other PC's newer versions, refresh this PC's outbox, then write the note (files first, then
     the note that names them) and the state."""
-    scan(cfg, state, now, set(frozen_repos))
+    scan(cfg, state, now, set(frozen_repos), peer_note)
     res = import_from_peer(cfg, state, peer_note, set(frozen_repos), allow_deletes, now)
     res.skipped = [*state["errors"], *res.skipped]
     res.exported = refresh_outbox(cfg, state, peer_note)

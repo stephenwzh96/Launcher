@@ -153,7 +153,8 @@ change of the other wins; only versions changed on both PCs independently fall b
 whose clock is ahead cannot undo a later change made from its own version. The status warns when the other PC's
 note, heartbeat or newest change is stamped more than 30 s in this PC's future.
 
-**Note:** each PC's note lists every data path with its version (tombstones kept 30 days).
+**Note:** each PC's note lists every data path with its version (tombstones kept 30 days and until the other
+PC's note shows the same deletion, at most 90 days, so a PC that was off for weeks does not bring files back).
 
 **Outbox:** holds exactly the files whose version on this PC is newer than the other PC's version (per its note)
 and whose content the other PC lacks. Files are written before the note that names them. When the other PC's note
@@ -170,8 +171,8 @@ shows the same content, the outbox copy is removed. Nothing bounces back.
 | Replacing or deleting a file this PC had changed since the other PC last saw it (a clash) | back up this PC's copy to `MachineSync\backup\<date>\...`, then replace; list it in the status on both PCs |
 | Busy repo with a daily task running, file changing right now, or tracked by this PC's Git | skip this run (the last stays flagged) |
 
-Every deletion is backed up. **Deletion brake:** more than max(50, 2% of files) deletions in one run are held and
-flagged; `machine_sync.py run --allow-deletes` lets them through. Backups older than 60 days are pruned (14 until 18 Nov 2026).
+Every deletion is backed up. **Deletion brake:** more than max(50, 2% of files) deletions in one run, or more than
+max(150, 5% of files) in one day (runs added up, `deleted_today` in `state.json`), are held and flagged; `machine_sync.py run --allow-deletes` lets them through. Backups older than 60 days are pruned (14 until 18 Nov 2026).
 
 Both PCs apply the same rule to the same two versions, so they converge; restoring a backup is a new change and
 wins.

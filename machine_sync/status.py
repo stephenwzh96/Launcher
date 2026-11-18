@@ -41,7 +41,11 @@ def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportR
     acts = [f"{word} {n}" for word, n in (("took", res.taken), ("deleted", res.deleted), ("sent", res.exported),
                                          ("waiting for", res.waiting)) if n]
     lines.append(f"  {live:,} data files; " + ("this run: " + ", ".join(acts) if acts else "nothing to move"))
-    if res.held_deletes:
+    if res.held_deletes and res.held_today is not None:
+        lines.append(f"  {res.held_deletes} deletions from {peer} held back: with the {res.held_today} already taken "
+                     f"today they pass the day's limit of {res.day_limit}: check them, then run the sync with "
+                     "--allow-deletes")
+    elif res.held_deletes:
         lines.append(f"  {res.held_deletes} deletions from {peer} held back (more than usual): check them, then run "
                      "the sync with --allow-deletes")
     day_ago = now.timestamp() - 86400
