@@ -356,6 +356,7 @@ class TaskRunner:
                     "expected_minutes": task.expected_minutes,
                     "has_preview": bool(task.preview_cmd),
                     "done_today": self._done_today(task_id),
+                    "again_label": task.again_label,
                     "queued": task_id in self.queue[1:],
                     "run": None,
                 }

@@ -168,3 +168,16 @@ class ClaimDayTest(unittest.TestCase):
         for rule in ("18:00", "6pm America/New_York", "18:00 America/Nowhere"):
             with self.assertRaises(ValidationError, msg=rule):
                 self.task(rule)
+
+
+class AgainLabelTest(unittest.TestCase):
+    """The page's button once today's run is done: "Rerun", or the task's `again_label` (the IBKR paper cycle's
+    second press trades the approved list: "Start trading")."""
+
+    def test_status_carries_the_label(self) -> None:
+        tmp = Path(tempfile.mkdtemp(prefix="again-"))
+        paper = TaskConfig(id="paper", label="IBKR paper cycle", cwd=".", cmd=["x"], again_label="Start trading")
+        sod = TaskConfig(id="sod", label="MTFA Start of Day", cwd=".", cmd=["x"])
+        tasks = {t["id"]: t for t in TaskRunner([paper, sod], tmp / "logs", sync_dir=tmp).status()["tasks"]}
+        self.assertEqual(tasks["paper"]["again_label"], "Start trading")
+        self.assertIsNone(tasks["sod"]["again_label"])

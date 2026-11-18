@@ -35,13 +35,14 @@
 
 - id: ibkr-paper-cycle
   label: IBKR paper cycle
-  summary: Builds the day's trade list and waits for your approval; press again to trade it overnight.
+  summary: Builds the day's trade list and waits for your approval; approve it on MTFA Execution, then press Start trading.
   when: by 16:25
   description: The IBKR paper book's day, on the strategy picked with "Trade on paper" on the Trend dashboard (MTFA until you switch). Start it once MTFA Start of Day says GO and before the first trading window (about 16:25 Sydney); it needs the server's gateway logged in.
-    First press - pre-open, books and the day's trade list, then Done while the list waits for your approval; the log ends with the list and its cycle id. Review it on the MTFA Execution card, approve it, then press Start again. Second press - it trades the day's windows and keeps running until the night's reconcile (about 08:20 Sydney), so leave the laptop on and plugged in. Failed = halted (the log and the execution dashboard say why) or the gateway could not be reached.
+    First press - pre-open, books and the day's trade list, then Done while the list waits for your approval; the log ends with the list and its cycle id. Review it on the MTFA Execution page and approve it there (the Approval box), then press Start trading. Second press - it trades the day's windows and keeps running until the night's reconcile (about 08:20 Sydney), so leave the laptop on and plugged in. Failed = halted (the log and the execution dashboard say why) or the gateway could not be reached.
   cwd: ../IBKR
   cmd: ["../IBKR/.venv/Scripts/python.exe", "-m", "src.operations", "run", "--mode", "paper", "--envelopes", "../Trend/AIJPMT1A_build/live/targets"]
   claim: daily  # runs on the PC that ran today's Start of Day (it reads that PC's envelopes)
   # its presses claim the trade day they run (IBKR's default_trade_day), not the date: a press or restart after
   # midnight Sydney stays on the day its cycle began instead of taking the next day from the other PC
   claim_day: "18:00 America/New_York"
+  again_label: Start trading  # the second press, once the first has built the list (the button says Rerun otherwise)

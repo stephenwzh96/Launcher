@@ -89,6 +89,9 @@ class TaskConfig(BaseModel):
     # day its run belongs to (the weekday after the latest weekday whose HH:MM has passed there) instead of today's
     # date, so a press after midnight stays on the day its run began. Without it: today's date in `timezone`.
     claim_day: str | None = None
+    # optional: the button's word once today's run is done (default "Rerun"), for a task whose second press does
+    # something else, as the IBKR paper cycle's trades the approved list
+    again_label: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("claim_day")

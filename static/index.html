@@ -466,7 +466,7 @@ function renderTask(t) {
   const start = $(".start", el);
   start.hidden = running || t.queued;
   start.disabled = false;  // startTask disables it until the run shows up
-  start.textContent = t.done_today ? "Rerun" : "Start";
+  start.textContent = t.done_today ? t.again_label || "Rerun" : "Start";
   $(".stop", el).hidden = !running || t.run.stopping;
   $(".log-toggle", el).hidden = !t.run;
 }
