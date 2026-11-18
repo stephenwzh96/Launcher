@@ -106,13 +106,14 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   progress, no commits missing from GitHub, not split from it; and the sync updated the task's libraries after their
   last code change (`MachineSync\pending_uv.json` lists none of its repos). Otherwise it refuses and says what
   differs; **Start anyway** (the page asks) starts it regardless. Two things only warn, and the start goes ahead:
-  edited or staged tracked files (Start of Day rewrites some of Trend's itself, committed hours later; the claim
-  records them), and newer data the other PC's note lists in the daily tasks' repos that is not here yet (up to 5
+  edited or staged tracked files (Start of Day rewrites some of Trend's itself, committed hours later; the day's
+  first start records them in the claim), and newer data the other PC's note lists in the daily tasks' repos that is not here yet (up to 5
   files, each with why: "should arrive with the next sync", "laptop last seen 70 min ago", "open or in use here",
   "held deletion (needs --allow-deletes)", "held while a daily task runs here"). The row then says "Started with:
   ...". Untracked files are fine. The claim's commit message lists each repo's commit below its first line (`Trend
-  <sha>`, then `+edits: Trend 2 files` when there are edits). Run all stops at a refused start and the page shows that
-  refusal, with its offer, as for a single start.
+  <sha>`, then `+edits: Trend 2 files` when there are edits). That record is the day's first start's: later presses
+  (re-runs, the cycle's Start trading) re-use the claim and leave its message as it was; a take-over writes a new one.
+  Run all stops at a refused start and the page shows that refusal, with its offer, as for a single start.
 
 ## How it works
 

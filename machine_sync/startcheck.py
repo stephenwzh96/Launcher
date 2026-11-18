@@ -69,8 +69,9 @@ def edits(cfg: Settings, repos: list[str]) -> dict[str, int]:
 
 
 def edit_warnings(cfg: Settings, repos: list[str]) -> list[str]:
-    """A start goes ahead with edited tracked files; it says so, and the claim records it."""
-    return [f"{repo}: {_plural(n, 'edited tracked file')} not committed (recorded in the day's claim)"
+    """A start goes ahead with edited tracked files and says so (the day's first start also records them in its
+    claim: code_record)."""
+    return [f"{repo}: {_plural(n, 'edited tracked file')} not committed"
             for repo, n in edits(cfg, repos).items()]
 
 

@@ -73,8 +73,7 @@ class InStepTest(StartCheckCase):
         (self.trend / ".gitignore").write_text("data/\n*.log\n*.tmp\n")
         r = self.runner()
         self.assertIsNone(r.start("sod"))
-        self.assertEqual(r.warnings["sod"], ["Trend: 2 edited tracked files not committed (recorded in the day's "
-                                             "claim)"])
+        self.assertEqual(r.warnings["sod"], ["Trend: 2 edited tracked files not committed"])
         self.assertEqual(self.claimer.calls[0]["record"][-1], "+edits: Trend 2 files")
         self.assertEqual(r.runs["sod"]["warnings"], r.warnings["sod"])  # kept with the run: the page shows it
         shown = {t["id"]: t for t in r.status()["tasks"]}["sod"]["run"]["warnings"]
@@ -120,6 +119,16 @@ class InStepTest(StartCheckCase):
         with mock.patch.object(startcheck, "code_problems", side_effect=OSError("disk gone")):
             self.assert_refused(r, "could not check this (OSError: disk gone)")
             self.assertIsNone(r.start("sod", allow_unsynced=True))
+
+    def test_later_presses_keep_the_first_starts_record(self) -> None:
+        from machine_sync.claims import claim
+
+        launcher = clone(make_origin(self.tmp, "launcher"), self.tmp / "desk" / "launcher")
+        first = claim(launcher, "daily", "2026-11-18", "desktop", record=["Trend aaa111"])
+        again = claim(launcher, "daily", "2026-11-18", "desktop", record=["Trend bbb222", "+edits: Trend 1 file"])
+        self.assertTrue(again.ok)
+        self.assertEqual(again.sha, first.sha)  # the day's first claim, re-used
+        self.assertIn("Trend aaa111", run(launcher, "log", "-1", "--format=%B", again.sha))
 
     def test_code_record_that_fails_says_so_in_the_claim_and_still_starts(self) -> None:
         from unittest import mock

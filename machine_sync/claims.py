@@ -1,8 +1,10 @@
 """One daily run per day (design, "One daily run per day"): before a daily task starts, the launcher pushes a claim
 to its GitHub repo, `refs/daily-claims/<claim>/<YYYY-MM-DD>` -> a commit with no parent whose message names the PC.
 GitHub takes only the first push: a second, unrelated commit is not a fast-forward and is rejected, so two PCs can
-never both hold a day. The holder may re-claim (re-runs, the IBKR cycle's second press). Take-over replaces the claim
-only if it is still the one this PC saw (force-with-lease), so two take-overs at once still leave one holder.
+never both hold a day. The holder may re-claim (re-runs, the IBKR cycle's second press): that re-uses the day's
+first claim, whose message (and its code record, the commits that first start ran on) stays as it was; later presses
+are not recorded. Take-over replaces the claim, with a record of its own, only if it is still the one this PC saw
+(force-with-lease), so two take-overs at once still leave one holder.
 Every network call has a time limit: a stalled GitHub refuses the start instead of hanging the launcher. Old claims
 are pruned separately (prune(), after the start)."""
 from __future__ import annotations
@@ -60,7 +62,9 @@ def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = Fals
     """Claim `day` for this PC. ok: this PC holds it now. Refused: ok False with the holder. GitHub unreachable or
     too slow: ok False with an error (the caller must not start the task). take_over replaces the current claim only
     if it is still `lease` (the claim this PC saw; read now when not given). record: lines written below the
-    message's first line (which older readers parse): the code the run starts on ("<repo> <sha>", "+edits: ...")."""
+    message's first line (which older readers parse): the code the run starts on ("<repo> <sha>", "+edits: ...").
+    Written only by the push that creates the claim (the day's first start, or a take-over): a re-claim by the
+    holder keeps the first message."""
     at = (now or datetime.now()).isoformat(timespec="seconds")
     ref = ref_name(claim, day)
     if take_over and lease is None:
