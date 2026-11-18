@@ -246,6 +246,10 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
         entries[rel] = {"h": h, "t": stamp, "m": cfg.machine, "vv": vv, "del": False,
                         "size": st.st_size, "mt": st.st_mtime_ns}
     for rel, e in list(entries.items()):
+        if skipped(rel):  # no longer data by this PC's rules (a rule added since): forgotten, never a deletion
+            del entries[rel]
+            missing.pop(rel, None)
+            continue
         if e["del"]:
             if _tombstone_done(e, peer_files.get(rel), now):
                 del entries[rel]

@@ -535,3 +535,25 @@ class DataSyncTest(TempDirCase):
         self.assertEqual((len(held), held[0]), (60, "Trend/data/h000.csv"))
         self.pc_run(self.desk, allow_deletes=True)
         self.assertEqual(load_state(self.desk)["held_deletions"], [])
+
+    def test_paths_now_excluded_leave_state_without_a_deletion(self) -> None:
+        """Files synced before a rule excluded them (an older tool sent x.tmp) are forgotten, never deleted on the
+        other PC (review item 5)."""
+        self.synced("data/report.csv", "kept")
+        state = load_state(self.lap)
+        for rel in ("Trend/data/half.csv.tmp", "Trend/live/.staging/envelope.json"):
+            state["files"][rel] = {"h": "abc", "t": self.clock - 600, "m": "laptop", "vv": {"laptop": self.clock - 600},
+                                   "del": False, "size": 1, "mt": 0}
+        state["files"]["Trend/data/gone.part"] = {"h": None, "t": self.clock - 600, "m": "laptop",
+                                                  "vv": {"laptop": self.clock - 600}, "del": True, "size": 0, "mt": 0}
+        from machine_sync.data_sync import save_state
+
+        save_state(self.lap, state)
+        self.write(self.lap, "live/.staging/envelope.json", "still here")  # on disk; the .tmp is gone
+        self.pc_run(self.lap)
+        self.pc_run(self.lap)  # missing on two runs would have made the .tmp a deletion
+        files = load_state(self.lap)["files"]
+        self.assertEqual(sorted(r for r in files if "data/report" not in r), [])
+        self.assertFalse(any(e["del"] for e in files.values()))
+        note = read_note(self.lap, "laptop")["files"]
+        self.assertEqual(sorted(note), ["Trend/data/report.csv"])
