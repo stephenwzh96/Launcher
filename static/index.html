@@ -570,6 +570,7 @@ async function startTask(id, opts = {}) {
   const query = new URLSearchParams();
   if (opts.takeOver) query.set("take_over", "true");
   if (opts.allowUnsynced) query.set("allow_unsynced", "true");
+  if (opts.forceTakeOver) query.set("force_take_over", "true");
   const qs = query.toString();
   const url = `/api/tasks/${id}/start${qs ? "?" + qs : ""}`;
   const data = await (await fetch(url, { method: "POST" })).json();
@@ -580,6 +581,11 @@ async function startTask(id, opts = {}) {
       + "on this PC? Only do this if that PC's run has ended or that PC is off: two runs on one day can "
       + "send duplicate orders.";
     if (confirm(ask)) return startTask(id, { ...opts, takeOver: true });
+  } else if (!data.ok && data.offer === "take_over_anyway" && !opts.forceTakeOver) {
+    // the other PC's sync says it is on or still running a daily task: ask again, more plainly
+    const ask = `${said}\n\nHave you checked that the other PC's run has ended? Take over anyway and start `
+      + `${t.label} here?`;
+    if (confirm(ask)) return startTask(id, { ...opts, forceTakeOver: true });
   } else if (!data.ok && data.offer === "start_anyway" && !opts.allowUnsynced) {
     // this PC is not in step with GitHub or the other PC: the run would not use the code and data on main
     if (confirm(`${said}\n\nStart ${t.label} anyway?`)) return startTask(id, { ...opts, allowUnsynced: true });

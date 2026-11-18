@@ -196,7 +196,9 @@ wins.
 - Claim already held by this PC: start (re-runs and the cycle's second press work). Held by the other PC: refuse
   with "already started on laptop at 10:02". Not reachable: refuse ("could not check GitHub").
 - **Take over** (button after the refusal, with a warning to use it only if the other PC's run ended or it is off):
-  force-pushes this PC's claim and starts.
+  force-pushes this PC's claim and starts. Fencing (18 Nov 2026): refused while the other PC's note or heartbeat
+  is under 15 minutes old or its note lists a daily task running (`running_tasks`, new note field; an older
+  note's `repos.*.running`); `force_take_over` (a second confirmation on the page) overrides.
 - The sync tool records today's claim (`daily_claim.json`); the launcher's Start of Day reminder is not shown on the
   PC that does not hold it.
 - Claims older than 30 days are deleted after a claimed task has started, in the background (never holding the

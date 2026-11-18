@@ -168,6 +168,17 @@ class RunnerTest(TempDirCase):
         self.assertEqual(read_repo(desk.repo_path("IBKR")).branch, "feature")  # not used by these tasks
         self.assertIn("follows only main", text)
 
+    def test_note_lists_running_daily_tasks(self) -> None:
+        from machine_sync.data_sync import read_note
+        from machine_sync.procs import Proc
+
+        tasks = self._sod_and_cycle(self.desk)
+        cycle = Proc(9, "python.exe", "python.exe -m src.operations run --mode paper")
+        run_once(self.desk, now=datetime.now() + timedelta(minutes=5), procs=[cycle], tasks=tasks)
+        self.assertEqual(read_note(self.desk, "desktop")["running_tasks"], ["cycle"])  # the other PC's take-over fence
+        run_once(self.desk, now=datetime.now() + timedelta(minutes=6), procs=[], tasks=tasks)
+        self.assertEqual(read_note(self.desk, "desktop")["running_tasks"], [])
+
     def test_process_list_failure_holds_daily_repos(self) -> None:
         from unittest import mock
 

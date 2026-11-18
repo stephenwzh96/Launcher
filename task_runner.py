@@ -107,7 +107,8 @@ class TaskRunner:
         self.sync_dir = Path(sync_dir)
         self.refusals: dict[str, str] = {}  # task id -> the PC holding today's claim, after a refused start
         # task id -> what the page may offer after a refused start: "take_over" (another PC holds the day),
-        # "start_anyway" (this PC is not in step: allow_unsynced=True)
+        # "start_anyway" (this PC is not in step: allow_unsynced=True), "take_over_anyway" (the other PC may still
+        # be running: force_take_over=True)
         self.offers: dict[str, str] = {}
         self.start_lock = threading.Lock()
         self.sync_wait_s = SYNC_WAIT_S
@@ -177,6 +178,17 @@ class TaskRunner:
                 "rebuilt from GitHub:\n" + "\n".join(f"- {ln}" for ln in lines)
                 + "\nCommit and push, or undo, then start again; or start anyway.")
 
+    def _check_peer_idle(self, task: TaskConfig, cfg: Settings) -> str | None:
+        """Before a take-over: None unless the other PC's sync says it is on (ran within 15 minutes) or running a
+        daily task (fencing: the claim alone cannot stop a run that is still going there)."""
+        labels = {t.id: t.label for t in self.tasks.values()}
+        found = startcheck.peer_busy(cfg, time.time(), labels)
+        if not found:
+            return None
+        return (f"{task.label}: not taken over: the {cfg.peer} may still be running today's daily run: "
+                + "; ".join(found) + ". Two runs on one day can send duplicate orders. Take over anyway only if "
+                f"you have checked that the {cfg.peer}'s run has ended (its launcher, or the execution dashboard).")
+
     def _check_claim(self, task: TaskConfig, take_over: bool, machine: str,
                      heads: dict[str, str] | None = None) -> str | None:
         """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
@@ -200,13 +212,16 @@ class TaskRunner:
                    for c in read_claims(self.sync_dir))
 
     # ----- actions -----
-    def start(self, task_id: str, take_over: bool = False, allow_unsynced: bool = False) -> str | None:
+    def start(self, task_id: str, take_over: bool = False, allow_unsynced: bool = False,
+              force_take_over: bool = False) -> str | None:
         """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim, or
         this PC is not in step (a repo the task uses is off its default branch, has edited tracked files, commits
-        not on GitHub or is split from it: allow_unsynced starts it anyway). A daily task starts only between sync
-        runs (MachineSync\\run.lock, held while claiming and starting), so the next sync run already sees it running.
-        The claim goes to GitHub outside self.lock: the page's status stays live meanwhile. Returns an error message
-        on failure, else None; self.offers says what the page may offer next."""
+        not on GitHub or is split from it: allow_unsynced starts it anyway). A take-over is refused while the other
+        PC's sync says it is on or running a daily task (force_take_over, a second confirmation, overrides it). A
+        daily task starts only between sync runs (MachineSync\\run.lock, held while claiming and starting), so the
+        next sync run already sees it running. The claim goes to GitHub outside self.lock: the page's status stays
+        live meanwhile. Returns an error message on failure, else None; self.offers says what the page may offer
+        next."""
         task = self.tasks[task_id]
         with self.start_lock:  # one start at a time (the page and a Run all)
             with self.lock:
@@ -231,6 +246,9 @@ class TaskRunner:
                 cfg = self._sync_cfg(machine)
                 if not allow_unsynced and (refused := self._check_in_step(task, cfg)):
                     self.offers[task_id] = "start_anyway"
+                    return refused
+                if take_over and not force_take_over and (refused := self._check_peer_idle(task, cfg)):
+                    self.offers[task_id] = "take_over_anyway"
                     return refused
                 heads = startcheck.heads(cfg, self._task_repos(cfg, task))  # into the claim: what the run ran
                 if refused := self._check_claim(task, take_over, machine, heads):

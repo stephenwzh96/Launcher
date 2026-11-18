@@ -104,5 +104,61 @@ class InStepTest(StartCheckCase):
         self.assertIn("\n\nIBKR def456 +edits\nTrend abc123", message)
 
 
+class TakeOverFenceTest(StartCheckCase):
+    """A take-over is refused while the other PC's sync says it is on (ran within 15 minutes) or running a daily
+    task; a second, stronger confirmation (force_take_over) overrides it (H3)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.claimer.result = ClaimResult(True, "desktop", "2026-11-18T10:05:00")
+
+    def peer_note(self, minutes_ago: float, **fields) -> None:
+        import json
+        import time
+
+        state = self.home / "TripSync" / "_state"  # the laptop's outbox, as the desktop sees it
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "laptop.json").write_text(json.dumps({"format": 1, "machine": "laptop", "files": {},
+                                                       "written": time.time() - minutes_ago * 60, **fields}))
+
+    def test_peer_running_a_daily_task_refuses_then_force_takes_over(self) -> None:
+        self.peer_note(120, running_tasks=["sod"])  # off for two hours, but it was running when it last synced
+        r = self.runner()
+        self.assert_refused(r, "the laptop may still be running", "reported a daily task running there "
+                            "(MTFA Start of Day)", offer="take_over_anyway", take_over=True)
+        self.assertIsNone(r.start("sod", take_over=True, force_take_over=True))
+        self.assertTrue(self.claimer.calls[0]["take_over"])
+
+    def test_peer_on_recently_refuses(self) -> None:
+        self.peer_note(3, running_tasks=[])
+        self.assert_refused(self.runner(), "its sync ran 3 min ago, so it is on", offer="take_over_anyway",
+                            take_over=True)
+
+    def test_heartbeat_file_counts(self) -> None:
+        import json
+        import time
+
+        self.peer_note(240, running_tasks=[])
+        (self.home / "TripSync" / "_state" / "laptop.alive.json").write_text(json.dumps({"written": time.time() - 60}))
+        self.assert_refused(self.runner(), "so it is on", offer="take_over_anyway", take_over=True)
+
+    def test_older_tools_note_marks_repos_running(self) -> None:
+        self.peer_note(120, repos={"Trend": {"running": True}, "IBKR": {"running": False}})
+        self.assert_refused(self.runner(), "(Trend)", offer="take_over_anyway", take_over=True)
+
+    def test_peer_off_and_idle_is_taken_over(self) -> None:
+        self.peer_note(120, running_tasks=[])
+        r = self.runner()
+        self.assertIsNone(r.start("sod", take_over=True))
+        self.assertTrue(self.claimer.calls[0]["take_over"])
+
+    def test_no_note_from_peer_is_taken_over(self) -> None:
+        self.assertIsNone(self.runner().start("sod", take_over=True))
+
+    def test_plain_start_does_not_look_at_the_peer(self) -> None:
+        self.peer_note(1, running_tasks=["sod"])
+        self.assertIsNone(self.runner().start("sod"))  # the claim decides; the fence is only for a take-over
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,7 +97,8 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
     try:
         res: ImportResult = sync_data(cfg, state, peer_note, now.timestamp(), frozen_repos=running_repos,
                                       allow_deletes=allow_deletes,
-                                      note_extra={"repos": repos_note, "claims": read_claims(cfg.sync_dir)})
+                                      note_extra={"repos": repos_note, "claims": read_claims(cfg.sync_dir),
+                                                  "running_tasks": sorted(running_ids)})
     except Exception as err:  # noqa: BLE001 - still write the status; the next run tries again
         res = ImportResult(skipped=[f"the data step failed: {type(err).__name__}: {err}"])
         warnings.append(f"the data step failed ({type(err).__name__}: {err}); next run tries again")
