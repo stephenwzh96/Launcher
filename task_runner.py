@@ -196,6 +196,14 @@ class TaskRunner:
                 + "; ".join(found) + ". Two runs on one day can send duplicate orders. Take over anyway only if "
                 f"you have checked that the {cfg.peer}'s run has ended (its launcher, or the execution dashboard).")
 
+    @staticmethod
+    def _guarded(check, task: TaskConfig, cfg: Settings) -> str | None:
+        """A start check that failed to run refuses (the page then offers to go ahead anyway), never crashes."""
+        try:
+            return check(task, cfg)
+        except Exception as err:  # noqa: BLE001 - a check must not take the launcher's start down
+            return f"{task.label}: could not check this ({type(err).__name__}: {err})."
+
     def _check_claim(self, task: TaskConfig, take_over: bool, machine: str,
                      heads: dict[str, str] | None = None) -> str | None:
         """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
@@ -250,11 +258,14 @@ class TaskRunner:
                         f"{f', process {pid}' if pid else ''}) and did not finish in {self.sync_wait_s:.0f} s; "
                         "not started. Try again in a minute.")
             try:
-                cfg = self._sync_cfg(machine)
-                if not allow_unsynced and (refused := self._check_in_step(task, cfg)):
+                try:
+                    cfg = self._sync_cfg(machine)
+                except ValueError as err:  # machine.txt names neither desktop nor laptop
+                    return f"{task.label}: {self.sync_dir}\\machine.txt is not right ({err}); not started."
+                if not allow_unsynced and (refused := self._guarded(self._check_in_step, task, cfg)):
                     self.offers[task_id] = "start_anyway"
                     return refused
-                if take_over and not force_take_over and (refused := self._check_peer_idle(task, cfg)):
+                if take_over and not force_take_over and (refused := self._guarded(self._check_peer_idle, task, cfg)):
                     self.offers[task_id] = "take_over_anyway"
                     return refused
                 heads = startcheck.heads(cfg, self._task_repos(cfg, task))  # into the claim: what the run ran

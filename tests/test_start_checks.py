@@ -92,6 +92,16 @@ class InStepTest(StartCheckCase):
         run(self.trend, "fetch")
         self.assert_refused(self.runner(), "split from GitHub's origin/main", "1 commit not on GitHub")
 
+    def test_a_check_that_fails_to_run_refuses_and_can_be_overridden(self) -> None:
+        from unittest import mock
+
+        from machine_sync import startcheck
+
+        r = self.runner()
+        with mock.patch.object(startcheck, "code_problems", side_effect=OSError("disk gone")):
+            self.assert_refused(r, "could not check this (OSError: disk gone)")
+            self.assertIsNone(r.start("sod", allow_unsynced=True))
+
     def test_claim_message_carries_heads_old_readers_still_parse_it(self) -> None:
         from machine_sync.claims import claim, holder
 
