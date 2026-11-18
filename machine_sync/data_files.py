@@ -20,13 +20,20 @@ SKIP_FILE = re.compile(r"""(?ix)^(
 )$""")
 SKIP_SUFFIX = ("config/local.yaml",)
 SQLITE_HEADER = b"SQLite format 3\x00"
+# The one kind of file in a logs folder that is data: Trend's Start of Day record of a day (`data/logs/sod_<t>.json`),
+# which IBKR's execution dashboard and the launcher's reminder read on whichever PC is in use. Progress files, locks,
+# fetch status and logs stay on their PC.
+LOG_RECORDS = re.compile(r"(^|/)data/logs/sod_\d{4}-\d{2}-\d{2}\.json$")
 
 
 def skipped(rel: str) -> bool:
-    parts = rel.replace("\\", "/").split("/")
+    norm = rel.replace("\\", "/")
+    if LOG_RECORDS.search(norm):
+        return False
+    parts = norm.split("/")
     if any(p in SKIP_DIRS or p == ".." or p.endswith(".egg-info") for p in parts[:-1]):
         return True
-    return bool(SKIP_FILE.match(parts[-1])) or rel.replace("\\", "/").lower().endswith(SKIP_SUFFIX)
+    return bool(SKIP_FILE.match(parts[-1])) or norm.lower().endswith(SKIP_SUFFIX)
 
 
 def _walk(root: Path, base: Path):
@@ -34,7 +41,8 @@ def _walk(root: Path, base: Path):
         if "PG_VERSION" in filenames:  # a PostgreSQL data folder: live database files are never copied
             dirnames[:] = []
             continue
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.endswith(".egg-info")]
+        # logs folders are walked only for their Start of Day records (skipped() drops everything else in them)
+        dirnames[:] = [d for d in dirnames if (d not in SKIP_DIRS or d == "logs") and not d.endswith(".egg-info")]
         for name in filenames:
             rel = (Path(dirpath) / name).relative_to(base).as_posix()
             if not skipped(rel):
@@ -61,7 +69,8 @@ def data_files(cfg: Settings) -> dict[str, Path]:
         listing = git(root, "ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory").stdout
         for entry in filter(None, listing.split("\0")):
             if entry.endswith("/"):
-                if entry.rstrip("/").split("/")[-1] in SKIP_DIRS:
+                name = entry.rstrip("/").split("/")[-1]
+                if name in SKIP_DIRS and name != "logs":  # a logs folder is walked for its Start of Day records only
                     continue
                 rels = _walk(root / entry, root)
             else:

@@ -22,12 +22,37 @@ CLAIM_KEEP_DAYS = 30
 FREEZE_UNTIL_HOUR = 9  # the claim-holding PC's busy repos keep their code until 09:00 the day after the claim
 
 
+def syncthing_folders(home: Path, localappdata: str | Path | None) -> tuple[Path, ...]:
+    """Every folder this PC's Syncthing shares (from its config.xml: the desktop's home is TripSync_syncthing, the
+    laptop's the default under %LOCALAPPDATA%). The sync never writes into one of these that is not its own outbox:
+    such a folder has its own writer (the VPS for IBKR's settlements) and Syncthing delivers it directly."""
+    import xml.etree.ElementTree as ET
+
+    candidates = [Path(home) / "TripSync_syncthing" / "config.xml"]
+    if localappdata:
+        candidates.append(Path(localappdata) / "Syncthing" / "config.xml")
+    found: set[Path] = set()
+    for cfg in candidates:
+        try:
+            root = ET.parse(cfg).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for folder in root.iter("folder"):
+            raw = folder.get("path") or ""
+            if raw.startswith("~"):
+                raw = str(Path(home)) + raw[1:]
+            if raw:
+                found.add(Path(raw).resolve())
+    return tuple(sorted(found))
+
+
 @dataclass
 class Settings:
     home: Path
     machine: str
     repos: tuple[str, ...] = DEFAULT_REPOS
     plain_roots: dict[str, list[str]] = field(default_factory=lambda: dict(DEFAULT_PLAIN_ROOTS))
+    syncthing_folders: tuple[Path, ...] = ()  # this PC's own Syncthing folders (see syncthing_folders())
 
     def __post_init__(self) -> None:
         self.home = Path(self.home)
@@ -65,4 +90,5 @@ class Settings:
         home = Path(os.environ.get("USERPROFILE", r"C:\Users\User"))
         if machine is None:
             machine = (home / "MachineSync" / "machine.txt").read_text(encoding="utf-8").strip()
-        return cls(home=home, machine=machine)
+        return cls(home=home, machine=machine,
+                   syncthing_folders=syncthing_folders(home, os.environ.get("LOCALAPPDATA")))

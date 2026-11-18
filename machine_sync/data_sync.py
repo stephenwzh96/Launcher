@@ -107,6 +107,17 @@ def _merge(a: dict, b: dict) -> dict:
     return {k: max(a.get(k, 0.0), b.get(k, 0.0)) for k in {*a, *b}}
 
 
+def _managed_folders(cfg: Settings) -> list[Path]:
+    """This PC's own Syncthing folders, except the two outboxes this tool uses."""
+    own = {cfg.own_outbox.resolve(), cfg.peer_outbox.resolve()}
+    return [Path(f).resolve() for f in cfg.syncthing_folders if Path(f).resolve() not in own]
+
+
+def _under(path: Path, folders: list[Path]) -> bool:
+    p = path.resolve()
+    return any(p == f or f in p.parents for f in folders)
+
+
 def _safe_rel(cfg: Settings, rel: str) -> bool:
     """A note path this PC may write: relative, no '..', inside one of the repos or plain folders."""
     parts = rel.split("/")
@@ -265,9 +276,14 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     res = ImportResult()
     entries, unstable = state["files"], set(state["unstable"])
     candidates = []
+    managed = _managed_folders(cfg)
+    held_by_syncthing = 0
     for rel, raw in ((peer_note or {}).get("files") or {}).items():
         if not _safe_rel(cfg, rel):
             res.skipped.append(f"{rel!r}: not inside a synced folder on this PC, ignored")
+            continue
+        if managed and _under(cfg.home / rel, managed):
+            held_by_syncthing += 1  # Syncthing brings it straight from its own writer (the VPS for settlements)
             continue
         p, e = _version(raw), entries.get(rel)
         if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
@@ -278,6 +294,8 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
         if (e is None and p["del"]) or (e is not None and _key(e) >= _key(p)):
             continue
         candidates.append((rel, p, e))
+    if held_by_syncthing:
+        res.skipped.append(f"{held_by_syncthing} files in folders this PC's Syncthing gets directly from their source")
     allowed = _ignored_here(cfg, [rel for rel, _, _ in candidates])
     takes, deletes = [], []
     for rel, p, e in candidates:

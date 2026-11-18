@@ -384,6 +384,34 @@ class DataSyncTest(TempDirCase):
         self.assertFalse(self.path(self.lap, "data/old_cache.json").exists())  # never resurrected
         self.assertTrue(self.path(self.lap, "data/made_here.txt").exists())
 
+    def test_sod_records_in_logs_are_data(self) -> None:
+        for rel in ("data/logs/sod_2026-11-17.json", "data/logs/sod_progress.json", "data/logs/fetch_status.json",
+                    "data/logs/market_restatements.csv", "data/logs/sod.lock"):
+            self.write(self.lap, rel, "x")
+        self.assertEqual(sorted(r for r in data_files(self.lap) if "/logs/" in r), ["Trend/data/logs/sod_2026-11-17.json"])
+
+    def test_sod_record_found_when_git_lists_logs_folder_on_its_own(self) -> None:
+        tracked = self.write(self.lap, "data/README.md", "tracked inside data/")  # as in Trend: Git then lists data/logs/
+        run(tracked.parents[1], "add", "-f", "data/README.md")
+        run(tracked.parents[1], "commit", "-m", "track a file in data")
+        self.write(self.lap, "data/logs/sod_2026-11-17.json", "x")
+        self.write(self.lap, "data/logs/sod_progress.json", "x")
+        self.assertEqual(sorted(r for r in data_files(self.lap) if "/logs/" in r), ["Trend/data/logs/sod_2026-11-17.json"])
+
+    def test_sod_record_reaches_other_pc(self) -> None:
+        self.write(self.lap, "data/logs/sod_2026-11-17.json", '{"verdict": "GO"}')
+        self.cycle(self.lap, self.desk)
+        self.assertEqual(self.read(self.desk, "data/logs/sod_2026-11-17.json"), '{"verdict": "GO"}')
+
+    def test_no_import_into_this_pcs_own_syncthing_folder(self) -> None:
+        self.desk.syncthing_folders = (self.path(self.desk, "data/settlements"),)
+        self.write(self.lap, "data/settlements/settlements_2026-11-17.json", "from the VPS")
+        self.pc_run(self.lap)
+        self.exchange()
+        res = self.pc_run(self.desk)
+        self.assertFalse(self.path(self.desk, "data/settlements/settlements_2026-11-17.json").exists())
+        self.assertTrue(any("Syncthing" in s for s in res.skipped), res.skipped)
+
     def test_excluded_files(self) -> None:
         for rel in ("data/ok.csv", "data/pg/PG_VERSION", "data/pg/base/1/2", "data/run.lock", "data/.env",
                     "data/node_modules/x.js", "data/logs/a.txt", "data/x.db-wal", "data/a.sync-conflict-1.csv"):
