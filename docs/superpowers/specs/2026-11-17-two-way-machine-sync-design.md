@@ -188,13 +188,14 @@ wins.
 - Before starting such a task, the launcher pushes a claim to the launcher's GitHub repo:
   `refs/daily-claims/<claim>/<YYYY-MM-DD>` → a commit with no parent whose message names the PC and time. GitHub
   accepts only the first (a second, unrelated commit is not a fast-forward), so two PCs cannot both claim.
-- Before claiming (18 Nov 2026 review): every repo the task uses, and the launcher, must be on its default branch
-  with no edited tracked files, no unpushed commits and nothing split from GitHub (`machine_sync/startcheck.py`,
-  local checks only), and every newer version the other PC's note lists in the daily tasks' repos has been
-  taken (the import's own rules: `pending_from_peer`), and no app folder of the task's repos waits in
-  `pending_uv.json` (every failed `uv pip sync` waits there and is retried each run); else refuse and offer **Start anyway** (`allow_unsynced`). The claim's commit message lists
-  each repo's HEAD below its first line. The code step follows the other PC in these repos only on their default
-  branch.
+- Before claiming (18 Nov 2026 review): every repo the task uses, and the launcher, must be on its default branch with
+  no Git operation in progress, no unpushed commits and nothing split from GitHub (`machine_sync/startcheck.py`, local
+  checks only), and every newer version the other PC's note lists in the daily tasks' repos has been taken (the
+  import's own rules: `pending_from_peer`), and no app folder of the task's repos waits in `pending_uv.json` (every
+  failed `uv pip sync` waits there and is retried each run); else refuse and offer **Start anyway**
+  (`allow_unsynced`). Edited or staged tracked files are only a warning (shown with the run, recorded in the claim as
+  `+edits: Trend 2 files`): Start of Day rewrites some of Trend's itself. The claim's commit message lists each repo's
+  HEAD below its first line. The code step follows the other PC in these repos only on their default branch.
 - Claim already held by this PC: start (re-runs and the cycle's second press work). Held by the other PC: refuse
   with "already started on laptop at 10:02". Not reachable: refuse ("could not check GitHub").
 - **Take over** (button after the refusal, with a warning to use it only if the other PC's run ended or it is off):

@@ -102,12 +102,15 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
   tool not installed (`MachineSync\machine.txt`): not started. The reminder is not shown on the PC that does not hold
   the day. See `machine_sync/` and `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
 - **In step before a daily start**: before claiming the day, the launcher checks every repo the task uses (from its
-  folder and command line, and the launcher itself): on its default branch, no edited or staged tracked files, no
-  commits missing from GitHub, not split from it (untracked files are fine); and every newer data file the other
-  PC's note lists in the daily tasks' repos has arrived here; and the sync updated the task's libraries after
-  their last code change (`MachineSync\pending_uv.json` is empty for its repos). Otherwise it refuses and says what
-  differs; **Start anyway** (the page asks) starts it regardless. The claim's commit message lists each repo's
-  commit below its first line (`Trend <sha>`, `+edits` when started anyway with edits).
+  folder and command line, and the launcher itself): on its default branch (not detached), no Git operation in
+  progress, no commits missing from GitHub, not split from it; every newer data file the other PC's note lists in the
+  daily tasks' repos has arrived here; and the sync updated the task's libraries after their last code change
+  (`MachineSync\pending_uv.json` lists none of its repos). Otherwise it refuses and says what differs; **Start
+  anyway** (the page asks) starts it regardless. Edited or staged tracked files do not refuse (Start of Day rewrites
+  some of Trend's itself, committed hours later): the start goes ahead, the row says "Started with: Trend: 2 edited
+  tracked files not committed", and the claim records it. Untracked files are fine. The claim's commit message lists
+  each repo's commit below its first line (`Trend <sha>`, then `+edits: Trend 2 files` when there are edits). Run all
+  stops at a refused start and the page shows that refusal, with its offer, as for a single start.
 
 ## How it works
 

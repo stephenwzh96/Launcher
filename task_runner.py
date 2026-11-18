@@ -87,8 +87,8 @@ def claim_day(task: TaskConfig, now: datetime) -> str:
 
 
 def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool,
-                     heads: dict[str, str] | None = None) -> day_claims.ClaimResult:
-    return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over, heads=heads)
+                     record: list[str] | None = None) -> day_claims.ClaimResult:
+    return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over, record=record)
 
 
 def _prune_on_github() -> None:
@@ -100,7 +100,7 @@ class TaskRunner:
                  claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None):
         self.tasks = {t.id: t for t in tasks}
         self.stop_grace_s = stop_grace_s
-        self.claimer = claimer  # (task, day, machine, take_over, heads=) -> ClaimResult
+        self.claimer = claimer  # (task, day, machine, take_over, record=) -> ClaimResult
         # deletes old claims from GitHub after a claimed start, in the background; only beside the real claimer, so a
         # runner with a stand-in claimer (tests) never reaches GitHub
         self.pruner = pruner or (_prune_on_github if claimer is _claim_on_github else (lambda: None))
@@ -110,6 +110,8 @@ class TaskRunner:
         # "start_anyway" (this PC is not in step: allow_unsynced=True), "take_over_anyway" (the other PC may still
         # be running: force_take_over=True)
         self.offers: dict[str, str] = {}
+        self.warnings: dict[str, list[str]] = {}  # task id -> what the last start went ahead despite (the page shows)
+        self.run_all_refusal: dict | None = None  # the start that stopped the last Run all, for the page to show
         self.start_lock = threading.Lock()
         self.sync_wait_s = SYNC_WAIT_S
         self.log_dir = log_dir / "tasks"
@@ -169,10 +171,10 @@ class TaskRunner:
 
     def _check_in_step(self, task: TaskConfig, cfg: Settings) -> str | None:
         """None when this PC is in step, else why not (start anyway: the page asks again and passes allow_unsynced):
-        every repo the task uses (and the launcher) is on its default branch with nothing uncommitted in tracked
-        files, nothing unpushed and nothing split from GitHub (H1); the other PC's newer data in the daily tasks'
-        repos has arrived (M7); the sync updated the libraries of the task's repos after their last code change
-        (L13)."""
+        every repo the task uses (and the launcher) is on its default branch, with no Git operation in progress,
+        nothing unpushed and nothing split from GitHub (H1; edited tracked files are only a warning:
+        _start_warnings); the other PC's newer data in the daily tasks' repos has arrived (M7); the sync updated the
+        libraries of the task's repos after their last code change (L13)."""
         lines = startcheck.code_problems(cfg, self._task_repos(cfg, task))
         lines += startcheck.libraries_pending(cfg, startcheck.task_repos(cfg, str(task.resolved_cwd()),
                                                                          task.resolved_cmd(), launcher=False))
@@ -196,6 +198,10 @@ class TaskRunner:
                 + "; ".join(found) + ". Two runs on one day can send duplicate orders. Take over anyway only if "
                 f"you have checked that the {cfg.peer}'s run has ended (its launcher, or the execution dashboard).")
 
+    def _start_warnings(self, task: TaskConfig, cfg: Settings) -> list[str]:
+        """What a start goes ahead despite, shown with the run: edited tracked files in the task's repos."""
+        return startcheck.edit_warnings(cfg, self._task_repos(cfg, task))
+
     @staticmethod
     def _guarded(check, task: TaskConfig, cfg: Settings) -> str | None:
         """A start check that failed to run refuses (the page then offers to go ahead anyway), never crashes."""
@@ -205,10 +211,10 @@ class TaskRunner:
             return f"{task.label}: could not check this ({type(err).__name__}: {err})."
 
     def _check_claim(self, task: TaskConfig, take_over: bool, machine: str,
-                     heads: dict[str, str] | None = None) -> str | None:
+                     record: list[str] | None = None) -> str | None:
         """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
         day = self._day(task)
-        res = self.claimer(task, day, machine, take_over, heads=heads)
+        res = self.claimer(task, day, machine, take_over, record=record)
         if res.ok:
             record_claim(self.sync_dir, task.claim, day, machine, res.at or datetime.now().isoformat(timespec="seconds"))
             return None
@@ -243,6 +249,7 @@ class TaskRunner:
                 self._settle(task_id)
                 self.refusals.pop(task_id, None)
                 self.offers.pop(task_id, None)
+                self.warnings.pop(task_id, None)
                 if self.runs.get(task_id, {}).get("state") == "running":
                     return f"{task.label} is already running"
             if not task.claim:
@@ -268,11 +275,16 @@ class TaskRunner:
                 if take_over and not force_take_over and (refused := self._guarded(self._check_peer_idle, task, cfg)):
                     self.offers[task_id] = "take_over_anyway"
                     return refused
-                heads = startcheck.heads(cfg, self._task_repos(cfg, task))  # into the claim: what the run ran
-                if refused := self._check_claim(task, take_over, machine, heads):
+                try:
+                    warnings = self._start_warnings(task, cfg)
+                except Exception as err:  # noqa: BLE001 - a warning that cannot be worked out is itself one
+                    warnings = [f"could not check for edited files ({type(err).__name__}: {err})"]
+                self.warnings[task_id] = warnings
+                record = startcheck.code_record(cfg, self._task_repos(cfg, task))  # into the claim: what it runs
+                if refused := self._check_claim(task, take_over, machine, record):
                     return refused
                 with self.lock:
-                    failed = self._spawn(task_id, task)
+                    failed = self._spawn(task_id, task, warnings)
             finally:
                 sync_lock.release(self.sync_dir)
             if failed is None:  # housekeeping on GitHub: never on the start's path, never under run.lock
@@ -285,8 +297,9 @@ class TaskRunner:
         except Exception:  # noqa: BLE001 - best effort: the next claimed start prunes again
             pass
 
-    def _spawn(self, task_id: str, task: TaskConfig) -> str | None:
-        """Start the task's process (self.lock held)."""
+    def _spawn(self, task_id: str, task: TaskConfig, warnings: list[str] | None = None) -> str | None:
+        """Start the task's process (self.lock held). warnings: what the start went ahead despite (kept with the
+        run for the page)."""
         now = datetime.now()
         log_path = self.log_dir / f"{task_id}_{now:%Y%m%d-%H%M%S}.log"
         env = {**os.environ, "PYTHONUNBUFFERED": "1", **task.env}
@@ -312,6 +325,8 @@ class TaskRunner:
             "pid": proc.pid,
             "log": log_path.name,
         }
+        if warnings:
+            self.runs[task_id]["warnings"] = list(warnings)
         self._save()
         return None
 
@@ -376,7 +391,12 @@ class TaskRunner:
                 if not self.queue:
                     return
                 task_id = self.queue[0]
-            if self.start(task_id):
+            if refused := self.start(task_id):  # the page shows it as for a single start, with its offer
+                with self.lock:
+                    seq = (self.run_all_refusal or {}).get("seq", 0) + 1
+                    self.run_all_refusal = {"seq": seq, "task_id": task_id, "errors": [refused],
+                                            "offer": self.offers.get(task_id),
+                                            "claimed_by": self.refusals.get(task_id)}
                 break
             while True:
                 time.sleep(2)
@@ -465,9 +485,12 @@ class TaskRunner:
                         else None,
                         "last_line": lines[-1][-300:] if lines else "",
                         "progress": prog,
+                        "warnings": run.get("warnings") or [],  # what its start went ahead despite
                     }
                     if prog and prog["step"]:  # the file is newer than the log's last step line
                         item["run"]["step"] = prog["step"]
                 out.append(item)
             running_all = bool(self.queue)
-        return {"running_all": running_all, "stop_grace_s": self.stop_grace_s, "tasks": out}
+            refusal = dict(self.run_all_refusal) if self.run_all_refusal else None
+        return {"running_all": running_all, "stop_grace_s": self.stop_grace_s, "tasks": out,
+                "run_all_refusal": refusal}

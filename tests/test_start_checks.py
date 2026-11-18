@@ -15,8 +15,8 @@ class Claimer:
     def __init__(self, result: ClaimResult) -> None:
         self.result, self.calls = result, []
 
-    def __call__(self, task, day, machine, take_over, heads=None):
-        self.calls.append({"take_over": take_over, "heads": heads})
+    def __call__(self, task, day, machine, take_over, record=None):
+        self.calls.append({"take_over": take_over, "record": record})
         return self.result
 
 
@@ -59,23 +59,42 @@ class InStepTest(StartCheckCase):
     def test_clean_checkout_starts_and_claim_names_its_commit(self) -> None:
         r = self.runner()
         self.assertIsNone(r.start("sod"))
-        self.assertEqual(self.claimer.calls[0]["heads"], {"Trend": run(self.trend, "rev-parse", "HEAD")})
+        self.assertEqual(self.claimer.calls[0]["record"], [f"Trend {run(self.trend, 'rev-parse', 'HEAD')}"])
+        self.assertEqual(r.warnings["sod"], [])
 
     def test_untracked_files_are_fine(self) -> None:
         (self.trend / "scratch.txt").write_text("not in Git")
         self.assertIsNone(self.runner().start("sod"))
 
-    def test_edited_tracked_file_refused_then_started_anyway(self) -> None:
-        (self.trend / "README.md").write_text("edited here\n")
+    def test_edited_tracked_files_start_with_a_warning_recorded_in_the_claim(self) -> None:
+        """Start of Day rewrites some of Trend's tracked files itself (reports/data_qa.md, trial_log.csv), committed
+        hours later: the IBKR cycle's presses and a re-run must still start (review of the branch, item 1)."""
+        (self.trend / "README.md").write_text("rewritten by the day's run\n")
+        (self.trend / ".gitignore").write_text("data/\n*.log\n*.tmp\n")
         r = self.runner()
-        self.assert_refused(r, "Trend: 1 edited tracked file not committed", "start anyway")
-        self.assertIsNone(r.start("sod", allow_unsynced=True))
-        self.assertTrue(self.claimer.calls[0]["heads"]["Trend"].endswith(" +edits"))
+        self.assertIsNone(r.start("sod"))
+        self.assertEqual(r.warnings["sod"], ["Trend: 2 edited tracked files not committed (recorded in the day's "
+                                             "claim)"])
+        self.assertEqual(self.claimer.calls[0]["record"][-1], "+edits: Trend 2 files")
+        self.assertEqual(r.runs["sod"]["warnings"], r.warnings["sod"])  # kept with the run: the page shows it
+        shown = {t["id"]: t for t in r.status()["tasks"]}["sod"]["run"]["warnings"]
+        self.assertEqual(shown, r.warnings["sod"])
 
-    def test_staged_file_refused(self) -> None:
+    def test_staged_file_is_a_warning(self) -> None:
         (self.trend / "new.py").write_text("x = 1\n")
         run(self.trend, "add", "new.py")
-        self.assert_refused(self.runner(), "1 edited tracked file")
+        r = self.runner()
+        self.assertIsNone(r.start("sod"))
+        self.assertIn("Trend: 1 edited tracked file", r.warnings["sod"][0])
+
+    def test_detached_head_refused(self) -> None:
+        run(self.trend, "switch", "--detach", "HEAD")
+        self.assert_refused(self.runner(), "Trend: not on a branch (detached HEAD)")
+
+    def test_operation_in_progress_refused(self) -> None:
+        git_dir = self.trend / ".git"
+        (git_dir / "MERGE_HEAD").write_text(run(self.trend, "rev-parse", "HEAD") + "\n")
+        self.assert_refused(self.runner(), "Trend: a merge in progress")
 
     def test_feature_branch_refused(self) -> None:
         run(self.trend, "switch", "-c", "feature")
@@ -106,12 +125,13 @@ class InStepTest(StartCheckCase):
         from machine_sync.claims import claim, holder
 
         launcher = clone(make_origin(self.tmp, "launcher"), self.tmp / "desk" / "launcher")
-        done = claim(launcher, "daily", "2026-11-18", "desktop", heads={"Trend": "abc123", "IBKR": "def456 +edits"})
+        done = claim(launcher, "daily", "2026-11-18", "desktop",
+                     record=["IBKR def456", "Trend abc123", "+edits: Trend 2 files"])
         self.assertTrue(done.ok)
         self.assertEqual(holder(launcher, "daily", "2026-11-18").holder, "desktop")
         message = run(launcher, "log", "-1", "--format=%B", done.sha)
         self.assertTrue(message.startswith("daily claim daily 2026-11-18 by desktop at "))
-        self.assertIn("\n\nIBKR def456 +edits\nTrend abc123", message)
+        self.assertIn("\n\nIBKR def456\nTrend abc123\n+edits: Trend 2 files", message)
 
 
 class TakeOverFenceTest(StartCheckCase):

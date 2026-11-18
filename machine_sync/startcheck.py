@@ -36,7 +36,10 @@ def task_repos(cfg: Settings, cwd: str, cmd: list[str], launcher: bool = True) -
 
 
 def repo_problems(path: Path) -> list[str]:
-    """Why a repo's checkout is not the code GitHub has on its default branch (untracked files are fine)."""
+    """Why a repo's checkout is not GitHub's default branch, which refuses a daily start (with the override): off
+    that branch, a Git operation in progress, commits not on GitHub, split from it. Edited tracked files are not
+    here: Start of Day rewrites some of Trend's itself (reports/data_qa.md, trial_log.csv) and they are committed
+    hours later, so they are only a warning (edits()); untracked files are fine."""
     s = read_repo(path)
     found = []
     default = default_branch(path)
@@ -46,14 +49,27 @@ def repo_problems(path: Path) -> list[str]:
         found.append(f"on branch {s.branch}, not {default}")
     if s.operation:
         found.append(f"a {s.operation} in progress")
-    if s.uncommitted:
-        found.append(f"{_plural(s.uncommitted, 'edited tracked file')} not committed")
     if s.unpushed:
         found.append(f"{_plural(s.unpushed, 'commit')} not on GitHub")
     if s.upstream_head and s.head != s.upstream_head and not _is_ancestor(path, s.head, s.upstream_head) \
             and not _is_ancestor(path, s.upstream_head, s.head):
         found.append(f"split from GitHub's {s.upstream}")
     return found
+
+
+def edits(cfg: Settings, repos: list[str]) -> dict[str, int]:
+    """Edited or staged tracked files per repo (only the repos that have some)."""
+    found = {}
+    for repo in repos:
+        if n := read_repo(cfg.repo_path(repo)).uncommitted:
+            found[repo] = n
+    return found
+
+
+def edit_warnings(cfg: Settings, repos: list[str]) -> list[str]:
+    """A start goes ahead with edited tracked files; it says so, and the claim records it."""
+    return [f"{repo}: {_plural(n, 'edited tracked file')} not committed (recorded in the day's claim)"
+            for repo, n in edits(cfg, repos).items()]
 
 
 def code_problems(cfg: Settings, repos: list[str]) -> list[str]:
@@ -88,15 +104,16 @@ def libraries_pending(cfg: Settings, repos: list[str]) -> list[str]:
     return lines
 
 
-def heads(cfg: Settings, repos: list[str]) -> dict[str, str]:
-    """Each repo's HEAD commit, "+edits" when tracked files differ from it (for the claim's message)."""
-    found = {}
+def code_record(cfg: Settings, repos: list[str]) -> list[str]:
+    """The lines the day's claim records below its first line: "<repo> <HEAD sha>" for each repo, then, when any
+    has edited tracked files, "+edits: Trend 2 files, IBKR 1 file"."""
+    lines = []
     for repo in repos:
-        path = cfg.repo_path(repo)
-        sha = out(path, "rev-parse", "HEAD")
-        if sha:
-            found[repo] = sha + (" +edits" if read_repo(path).uncommitted else "")
-    return found
+        if sha := out(cfg.repo_path(repo), "rev-parse", "HEAD"):
+            lines.append(f"{repo} {sha}")
+    if changed := edits(cfg, repos):
+        lines.append("+edits: " + ", ".join(f"{repo} {_plural(n, 'file')}" for repo, n in changed.items()))
+    return lines
 
 
 def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None) -> list[str]:

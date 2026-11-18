@@ -19,9 +19,9 @@ class FakeClaimer:
     def __init__(self, result: ClaimResult | None = None) -> None:
         self.result, self.calls = result, []
 
-    def __call__(self, task, day, machine, take_over, heads=None):
+    def __call__(self, task, day, machine, take_over, record=None):
         self.calls.append((task.id, day, machine, take_over))
-        self.heads = heads
+        self.record = record
         if self.result is None:
             raise AssertionError("no claim expected")
         return self.result
@@ -87,7 +87,7 @@ class ClaimGuardTest(unittest.TestCase):
         import time
 
         class SlowClaimer(FakeClaimer):
-            def __call__(self, task, day, machine, take_over, heads=None):
+            def __call__(self, task, day, machine, take_over, record=None):
                 time.sleep(2)
                 return ClaimResult(True, machine, "2026-11-17T09:41:00")
 
@@ -182,6 +182,34 @@ class AgainLabelTest(unittest.TestCase):
         tasks = {t["id"]: t for t in TaskRunner([paper, sod], tmp / "logs", sync_dir=tmp).status()["tasks"]}
         self.assertEqual(tasks["paper"]["again_label"], "Start trading")
         self.assertIsNone(tasks["sod"]["again_label"])
+
+
+class RunAllRefusalTest(unittest.TestCase):
+    """Run all stops at a refused start and leaves that refusal, with its offer, for the page (review of the branch,
+    item 1): it never stops silently."""
+
+    def test_refusal_is_shown_with_its_offer(self) -> None:
+        import time
+
+        tmp = Path(tempfile.mkdtemp(prefix="runall-"))
+        sync_dir = tmp / "MachineSync"
+        sync_dir.mkdir()
+        (sync_dir / "machine.txt").write_text("desktop\n")
+        sod = TaskConfig(id="sod", label="MTFA Start of Day", cwd=".", cmd=[sys.executable, "-c", "pass"],
+                         claim="daily")
+        after = TaskConfig(id="after", label="Later", cwd=".", cmd=[sys.executable, "-c", "pass"])
+        refused = FakeClaimer(ClaimResult(False, "laptop", "2026-11-18T09:41:00"))
+        r = TaskRunner([sod, after], tmp / "logs", claimer=refused, sync_dir=sync_dir)
+        self.assertIsNone(r.status()["run_all_refusal"])
+        self.assertEqual(r.run_all(), ["sod", "after"])
+        deadline = time.time() + 10
+        while r.status()["running_all"] and time.time() < deadline:
+            time.sleep(0.1)
+        refusal = r.status()["run_all_refusal"]
+        self.assertEqual((refusal["seq"], refusal["task_id"], refusal["offer"], refusal["claimed_by"]),
+                         (1, "sod", "take_over", "laptop"))
+        self.assertIn("already started on laptop", refusal["errors"][0])
+        self.assertNotIn("after", r.runs)  # the queue stopped there
 
 
 class PruneOffStartPathTest(unittest.TestCase):

@@ -273,6 +273,7 @@
       <h3 class="name"></h3>
       <p class="state"></p>
       <p class="warn" hidden></p>
+      <p class="warn started-with" hidden></p>
       <p class="summary"><span class="summary-text"></span> <button type="button" class="btn inline details" aria-expanded="false">Details</button></p>
       <p class="desc" hidden></p>
       <p class="preview" hidden></p>
@@ -452,9 +453,13 @@ function renderTask(t) {
   $(".name", el).textContent = t.label;
   $(".state", el).textContent = stateText(t);
   const warn = warnText(t);
-  $(".warn", el).textContent = warn;
-  $(".warn", el).hidden = !warn;
-  $(".warn", el).classList.toggle("late", Boolean(t.run && t.run.progress && t.run.progress.late));
+  const runWarn = $(".warn:not(.started-with)", el);
+  runWarn.textContent = warn;
+  runWarn.hidden = !warn;
+  runWarn.classList.toggle("late", Boolean(t.run && t.run.progress && t.run.progress.late));
+  const notes = (t.run && t.run.warnings) || [];  // what this run's start went ahead despite
+  $(".started-with", el).textContent = notes.length ? `Started with: ${notes.join("; ")}` : "";
+  $(".started-with", el).hidden = !notes.length;
   $(".summary-text", el).textContent = t.summary || t.description;
   $(".details", el).hidden = !(t.summary && t.description);  // no summary: the description is already shown
   $(".desc", el).textContent = t.description;
@@ -503,6 +508,7 @@ async function refreshTasks() {
   if (!tasks.length) $("#tasks").innerHTML = '<li class="empty">No tasks yet: add them to tasks.yaml.</li>';
   tasks.forEach(renderTask);
   renderReminder(data.reminders);
+  showRunAllRefusal(data.run_all_refusal);
   for (const t of tasks) {  // a run just ended: what is due has changed
     const state = t.run ? t.run.state : "none";
     if (t.has_preview && lastState[t.id] === "running" && state !== "running") loadPreview(t.id, true);
@@ -574,23 +580,43 @@ async function startTask(id, opts = {}) {
   const qs = query.toString();
   const url = `/api/tasks/${id}/start${qs ? "?" + qs : ""}`;
   const data = await (await fetch(url, { method: "POST" })).json();
-  const said = (data.errors || []).join("\n");
-  if (!data.ok && data.offer === "take_over" && !opts.takeOver) {
+  if (data.ok) return refreshTasks();  // warnings, if any, show on the row ("Started with: ...")
+  return answerRefusal(id, data, opts);
+}
+
+// A refused start: offer what the launcher says may be done next (each asked once), else say why.
+function answerRefusal(id, data, opts = {}, prefix = "") {
+  const t = tasksById[id];
+  const said = prefix + (data.errors || []).join("\n");
+  if (data.offer === "take_over" && !opts.takeOver) {
     // another PC started today's daily run: taking over is only for a run that ended or a PC that is off
     const ask = `${said}\n\nTake over today's run from ${data.claimed_by} and start ${t.label} `
       + "on this PC? Only do this if that PC's run has ended or that PC is off: two runs on one day can "
       + "send duplicate orders.";
     if (confirm(ask)) return startTask(id, { ...opts, takeOver: true });
-  } else if (!data.ok && data.offer === "take_over_anyway" && !opts.forceTakeOver) {
+  } else if (data.offer === "take_over_anyway" && !opts.forceTakeOver) {
     // the other PC's sync says it is on or still running a daily task: ask again, more plainly
     const ask = `${said}\n\nHave you checked that the other PC's run has ended? Take over anyway and start `
       + `${t.label} here?`;
     if (confirm(ask)) return startTask(id, { ...opts, forceTakeOver: true });
-  } else if (!data.ok && data.offer === "start_anyway" && !opts.allowUnsynced) {
+  } else if (data.offer === "start_anyway" && !opts.allowUnsynced) {
     // this PC is not in step with GitHub or the other PC: the run would not use the code and data on main
     if (confirm(`${said}\n\nStart ${t.label} anyway?`)) return startTask(id, { ...opts, allowUnsynced: true });
-  } else if (!data.ok) alert(`Could not start ${t.label}:\n${said}`);
+  } else alert(`Could not start ${t.label}:\n${said}`);
   refreshTasks();
+}
+
+// Run all stops at a refused start: the page shows that refusal once, as for a single start.
+let refusalSeq = null;  // null until the first refresh: a refusal from before the page opened is not shown
+
+function showRunAllRefusal(ref) {
+  if (refusalSeq === null) {
+    refusalSeq = ref ? ref.seq : 0;
+    return;
+  }
+  if (!ref || ref.seq <= refusalSeq || !tasksById[ref.task_id]) return;
+  refusalSeq = ref.seq;
+  setTimeout(() => answerRefusal(ref.task_id, ref, {}, "Run all stopped here.\n"), 0);
 }
 
 async function stopTask(id) {
