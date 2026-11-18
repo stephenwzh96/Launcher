@@ -6,14 +6,16 @@ import json
 import os
 import shlex
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .gitops import NO_WINDOW
 from .procs import Proc
+from .runlock import _created
 from .settings import FREEZE_UNTIL_HOUR, Settings
 
 CLAIM_FILE = "daily_claim.json"
+PID_SLACK_S = 60  # a progress file's process starts a little before it writes started_utc (launcher progress.py)
 CLAIM_DAYS_KEPT = 2
 
 _DUMP = """
@@ -116,13 +118,31 @@ def _matches(sig: tuple[str, list[str]], tokens: list[str]) -> bool:
     return any(t.rsplit("\\", 1)[-1] == want[0] for t in tokens[1:])
 
 
-def _progress_running(path: str | None, pids: set[int]) -> bool:
-    """The task's progress file (Trend's sod_progress.json) says running, and its process is alive."""
+def _started(doc: dict, path: Path) -> float:
+    """When the progress file's run started (Unix time): its started_utc (no offset = UTC), else the file's time."""
+    try:
+        text = doc.get("started_utc")
+        when = datetime.fromisoformat(text) if isinstance(text, str) and text else None
+    except ValueError:
+        when = None
+    if when is not None:
+        return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp()
+    return path.stat().st_mtime
+
+
+def _progress_running(path: str | None, pids: set[int], created=_created) -> bool:
+    """The task's progress file (Trend's sod_progress.json) says running, its process is alive, and that process
+    started no later than the run did (+ PID_SLACK_S): a pid Windows has since handed to another process is not the
+    run (the launcher's progress.py has the same guard). A start time that cannot be read is taken as the run's."""
     if not path:
         return False
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"))
-        return doc.get("state") == "running" and int(doc.get("pid") or 0) in pids
+        pid = int(doc.get("pid") or 0)
+        if doc.get("state") != "running" or pid not in pids:
+            return False
+        began = created(pid)
+        return began is None or began <= _started(doc, Path(path)) + PID_SLACK_S
     except (OSError, ValueError, TypeError, AttributeError):
         return False
 

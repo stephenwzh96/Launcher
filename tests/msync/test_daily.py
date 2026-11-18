@@ -105,6 +105,30 @@ class DailyTest(TempDirCase):
         self.assertEqual(running_tasks([sod], [other]), set())
         self.assertEqual(running_tasks([self.sod], [other]), set())  # a dump from before progress_file was listed
 
+    def test_progress_file_pid_must_have_started_before_the_run(self) -> None:
+        """A bare pid is not trusted: Windows may have handed it to a process started after the run (review item 3)."""
+        import subprocess
+        import sys
+        from datetime import UTC, timedelta
+
+        live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(live.wait)
+        self.addCleanup(live.kill)
+        progress = self.tmp / "sod_progress.json"
+        sod = {**self.sod, "progress_file": str(progress)}
+        procs = [Proc(live.pid, None, "python something_else.py")]
+
+        def started(when: datetime) -> None:
+            progress.write_text(json.dumps({"schema": "sod_progress/1", "state": "running", "pid": live.pid,
+                                            "started_utc": when.isoformat(timespec="seconds")}))
+
+        started(datetime.now(UTC))  # the run began after its process did
+        self.assertEqual(running_tasks([sod], procs), {"aijpmt1a-refresh"})
+        started(datetime.now(UTC) - timedelta(minutes=10))  # this pid's process began long after the run: reused
+        self.assertEqual(running_tasks([sod], procs), set())
+        started(datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=30))  # no offset: UTC, within the slack
+        self.assertEqual(running_tasks([sod], procs), {"aijpmt1a-refresh"})
+
     def test_dump_lists_progress_file(self) -> None:
         import subprocess
         import sys
