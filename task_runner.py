@@ -168,15 +168,19 @@ class TaskRunner:
         return startcheck.task_repos(cfg, str(task.resolved_cwd()), task.resolved_cmd())
 
     def _check_in_step(self, task: TaskConfig, cfg: Settings) -> str | None:
-        """None when every repo the task uses (and the launcher) is on its default branch with nothing uncommitted
-        in tracked files, nothing unpushed and nothing split from GitHub; else why not (start anyway: the page asks
-        again and passes allow_unsynced)."""
+        """None when this PC is in step, else why not (start anyway: the page asks again and passes allow_unsynced):
+        every repo the task uses (and the launcher) is on its default branch with nothing uncommitted in tracked
+        files, nothing unpushed and nothing split from GitHub (H1); the other PC's newer data in the daily tasks'
+        repos has arrived (M7)."""
         lines = startcheck.code_problems(cfg, self._task_repos(cfg, task))
+        daily = {r for t in self.tasks.values() if t.claim for r in self._task_repos(cfg, t)}
+        if waiting := startcheck.data_pending(cfg, daily):
+            lines.append(waiting)
         if not lines:
             return None
-        return (f"{task.label}: this PC's code is not what GitHub has on main, so today's run could not be "
-                "rebuilt from GitHub:\n" + "\n".join(f"- {ln}" for ln in lines)
-                + "\nCommit and push, or undo, then start again; or start anyway.")
+        return (f"{task.label}: this PC is not in step with GitHub's main and the {cfg.peer}, so today's run would "
+                "use other code or data:\n" + "\n".join(f"- {ln}" for ln in lines)
+                + "\nFix that and start again, or start anyway.")
 
     def _check_peer_idle(self, task: TaskConfig, cfg: Settings) -> str | None:
         """Before a take-over: None unless the other PC's sync says it is on (ran within 15 minutes) or running a

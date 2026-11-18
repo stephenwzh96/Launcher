@@ -190,7 +190,8 @@ wins.
   accepts only the first (a second, unrelated commit is not a fast-forward), so two PCs cannot both claim.
 - Before claiming (18 Nov 2026 review): every repo the task uses, and the launcher, must be on its default branch
   with no edited tracked files, no unpushed commits and nothing split from GitHub (`machine_sync/startcheck.py`,
-  local checks only); else refuse and offer **Start anyway** (`allow_unsynced`). The claim's commit message lists
+  local checks only), and every newer version the other PC's note lists in the daily tasks' repos has been
+  taken (the import's own rules: `pending_from_peer`); else refuse and offer **Start anyway** (`allow_unsynced`). The claim's commit message lists
   each repo's HEAD below its first line. The code step follows the other PC in these repos only on their default
   branch.
 - Claim already held by this PC: start (re-runs and the cycle's second press work). Held by the other PC: refuse

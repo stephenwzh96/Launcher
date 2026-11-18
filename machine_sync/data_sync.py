@@ -447,6 +447,30 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     return res
 
 
+def pending_from_peer(cfg: Settings, state: dict, peer_note: dict | None, repos: set[str]) -> list[str]:
+    """Paths in `repos` whose newer version (or deletion) the other PC's note lists and this PC has not taken yet:
+    the import's own rules, minus what it would never take (outside the synced folders, excluded here, delivered by
+    this PC's own Syncthing folders, tracked by Git here). For the launcher, before a daily task starts."""
+    entries, managed, found = state["files"], _managed_folders(cfg), []
+    for rel, raw in ((peer_note or {}).get("files") or {}).items():
+        if _repo_of(cfg, rel) not in repos or not _safe_rel(cfg, rel) or skipped(rel):
+            continue
+        if managed and _under(cfg.home / rel, managed):
+            continue
+        try:
+            p = _version(raw)
+        except (IndexError, TypeError):
+            continue
+        e = entries.get(rel)
+        if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
+            continue
+        if (e is None and p["del"]) or (e is not None and not _newer(p, e)):
+            continue
+        found.append(rel)
+    allowed = _ignored_here(cfg, found)
+    return sorted(rel for rel in found if rel in allowed)
+
+
 def _record_clash(state: dict, res: ImportResult, rel: str, p: dict, backup: Path | None, now: float) -> None:
     what = "deleted" if p["del"] else "changed"
     res.clashes.append(f"{rel}: changed on both PCs; {p['m']}'s {what} version kept, this PC's copy in {backup}")

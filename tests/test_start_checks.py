@@ -160,5 +160,62 @@ class TakeOverFenceTest(StartCheckCase):
         self.assertIsNone(self.runner().start("sod"))  # the claim decides; the fence is only for a take-over
 
 
+class PendingDataTest(StartCheckCase):
+    """A daily start waits for the other PC's newer data in the daily tasks' repos (M7)."""
+
+    def note(self, files: dict, fmt: int = 1) -> None:
+        import json
+        import time
+
+        state = self.home / "TripSync" / "_state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "laptop.json").write_text(json.dumps({"format": fmt, "machine": "laptop", "files": files,
+                                                       "written": time.time() - 3600}))
+
+    def state(self, files: dict) -> None:
+        import json
+
+        (self.sync_dir / "state.json").write_text(json.dumps({"files": files}))
+
+    @staticmethod
+    def version(h: str, t: float, deleted: bool = False) -> list:
+        return [h, t, "laptop", {"laptop": t}, deleted]
+
+    def test_newer_version_not_arrived_refuses_then_starts_anyway(self) -> None:
+        self.note({"Trend/data/x.csv": self.version("abc", 2000.0)})
+        r = self.runner()
+        self.assert_refused(r, "the laptop's latest changes have not arrived yet (1 file, e.g. Trend/data/x.csv)",
+                            "start anyway")
+        self.assertIsNone(r.start("sod", allow_unsynced=True))
+
+    def test_newer_version_of_a_file_here_refuses(self) -> None:
+        self.state({"Trend/data/x.csv": {"h": "old", "t": 1000.0, "m": "desktop", "vv": {"desktop": 1000.0},
+                                         "del": False, "size": 1, "mt": 0}})
+        self.note({"Trend/data/x.csv": [*self.version("new", 2000.0)[:3], {"desktop": 1000.0, "laptop": 2000.0},
+                                        False]})
+        self.assert_refused(self.runner(), "(1 file, e.g. Trend/data/x.csv)")
+
+    def test_nothing_pending_starts(self) -> None:
+        self.state({"Trend/data/x.csv": {"h": "abc", "t": 2000.0, "m": "laptop", "vv": {"laptop": 2000.0},
+                                         "del": False, "size": 1, "mt": 0}})
+        self.note({"Trend/data/x.csv": self.version("abc", 2000.0),  # arrived
+                   "Trend/README.md": self.version("tracked", 3000.0),  # tracked by Git here: never taken
+                   "Trend/data/gone.csv": self.version(None, 3000.0, deleted=True),  # deleted, and not here
+                   "Trend/data/half.csv.tmp": self.version("tmp", 3000.0),  # not data on this PC
+                   "FOMC/data/y.csv": self.version("other", 3000.0)})  # a repo no daily task uses
+        self.assertIsNone(self.runner().start("sod"))
+
+    def test_this_pcs_newer_version_is_not_pending(self) -> None:
+        self.state({"Trend/data/x.csv": {"h": "mine", "t": 500.0, "m": "desktop",
+                                         "vv": {"laptop": 2000.0, "desktop": 500.0}, "del": False, "size": 1,
+                                         "mt": 0}})
+        self.note({"Trend/data/x.csv": self.version("theirs", 2000.0)})  # this PC's was made from it
+        self.assertIsNone(self.runner().start("sod"))
+
+    def test_note_from_a_newer_tool_is_not_read(self) -> None:
+        self.note({"Trend/data/x.csv": self.version("abc", 2000.0)}, fmt=99)
+        self.assertIsNone(self.runner().start("sod"))
+
+
 if __name__ == "__main__":
     unittest.main()

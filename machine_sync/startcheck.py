@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .code_sync import _is_ancestor, default_branch
 from .daily import busy_repos
-from .data_sync import read_alive, read_note
+from . import NOTE_FORMAT
+from .data_sync import load_state, pending_from_peer, read_alive, read_note
 from .gitops import out, read_repo
 from .settings import LAUNCHER_REPO, Settings
 
@@ -62,6 +63,18 @@ def code_problems(cfg: Settings, repos: list[str]) -> list[str]:
         if found := repo_problems(cfg.repo_path(repo)):
             lines.append(f"{repo}: {'; '.join(found)}")
     return lines
+
+
+def data_pending(cfg: Settings, repos: set[str]) -> str | None:
+    """A line when the other PC's note lists newer versions in `repos` that this PC has not taken yet (M7)."""
+    note = read_note(cfg, cfg.peer)
+    if not note or note.get("format", 0) > NOTE_FORMAT:
+        return None
+    waiting = pending_from_peer(cfg, load_state(cfg), note, repos)
+    if not waiting:
+        return None
+    return (f"the {cfg.peer}'s latest changes have not arrived yet ({_plural(len(waiting), 'file')}, e.g. "
+            f"{waiting[0]}): wait for the next sync (every 5 minutes)")
 
 
 def heads(cfg: Settings, repos: list[str]) -> dict[str, str]:
