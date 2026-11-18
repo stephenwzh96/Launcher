@@ -519,3 +519,19 @@ class DataSyncTest(TempDirCase):
         res = self.pc_run(self.desk, allow_deletes=True)
         self.assertEqual(res.deleted, 40)
         self.assertEqual(load_state(self.desk)["deleted_today"]["n"], 160)
+
+
+    def test_held_deletions_are_recorded_for_the_launcher(self) -> None:
+        for i in range(60):
+            self.write(self.lap, f"data/h{i:03}.csv", str(i))
+        self.cycle(self.lap, self.desk)
+        for i in range(60):
+            self.path(self.lap, f"data/h{i:03}.csv").unlink()
+        self.pc_run(self.lap)
+        self.pc_run(self.lap)
+        self.exchange()
+        self.assertEqual(self.pc_run(self.desk).held_deletes, 60)
+        held = load_state(self.desk)["held_deletions"]
+        self.assertEqual((len(held), held[0]), (60, "Trend/data/h000.csv"))
+        self.pc_run(self.desk, allow_deletes=True)
+        self.assertEqual(load_state(self.desk)["held_deletions"], [])

@@ -410,11 +410,14 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     record = state.get("deleted_today") or {}
     done_today = int(record.get("n") or 0) if record.get("day") == day else 0
     day_limit = int(max(BRAKE_DAY_MIN, BRAKE_DAY_FRACTION * live))
+    held: list = []
     if deletes and not allow_deletes:
         if len(deletes) > max(BRAKE_MIN, BRAKE_FRACTION * live):  # one run's brake
-            res.held_deletes, deletes = len(deletes), []
+            held, res.held_deletes, deletes = deletes, len(deletes), []
         elif done_today + len(deletes) > day_limit:  # the day's: many small batches add up
-            res.held_deletes, res.held_today, res.day_limit, deletes = len(deletes), done_today, day_limit, []
+            held, res.held_deletes, res.held_today, res.day_limit = deletes, len(deletes), done_today, day_limit
+            deletes = []
+    state["held_deletions"] = sorted(rel for rel, _, _ in held)  # the launcher names them (older tools keep it)
     for rel, p, clash, staged in takes:
         if _changed_since_scan(cfg, rel, entries.get(rel)):
             res.skipped.append(f"{rel}: changed on this PC during this run, next run decides")
@@ -447,10 +450,11 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     return res
 
 
-def pending_from_peer(cfg: Settings, state: dict, peer_note: dict | None, repos: set[str]) -> list[str]:
-    """Paths in `repos` whose newer version (or deletion) the other PC's note lists and this PC has not taken yet:
-    the import's own rules, minus what it would never take (outside the synced folders, excluded here, delivered by
-    this PC's own Syncthing folders, tracked by Git here). For the launcher, before a daily task starts."""
+def pending_from_peer(cfg: Settings, state: dict, peer_note: dict | None, repos: set[str]) -> list[tuple[str, dict]]:
+    """(path, the other PC's version) for each path in `repos` whose newer version (or deletion) the other PC's note
+    lists and this PC has not taken yet: the import's own rules, minus what it would never take (outside the synced
+    folders, excluded here, delivered by this PC's own Syncthing folders, tracked by Git here). For the launcher,
+    before a daily task starts."""
     entries, managed, found = state["files"], _managed_folders(cfg), []
     for rel, raw in ((peer_note or {}).get("files") or {}).items():
         if _repo_of(cfg, rel) not in repos or not _safe_rel(cfg, rel) or skipped(rel):
@@ -466,9 +470,9 @@ def pending_from_peer(cfg: Settings, state: dict, peer_note: dict | None, repos:
             continue
         if (e is None and p["del"]) or (e is not None and not _newer(p, e)):
             continue
-        found.append(rel)
-    allowed = _ignored_here(cfg, found)
-    return sorted(rel for rel in found if rel in allowed)
+        found.append((rel, p))
+    allowed = _ignored_here(cfg, [rel for rel, _ in found])
+    return sorted((rel, p) for rel, p in found if rel in allowed)
 
 
 def _record_clash(state: dict, res: ImportResult, rel: str, p: dict, backup: Path | None, now: float) -> None:

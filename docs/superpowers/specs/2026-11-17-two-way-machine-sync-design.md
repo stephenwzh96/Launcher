@@ -190,12 +190,13 @@ wins.
   accepts only the first (a second, unrelated commit is not a fast-forward), so two PCs cannot both claim.
 - Before claiming (18 Nov 2026 review): every repo the task uses, and the launcher, must be on its default branch with
   no Git operation in progress, no unpushed commits and nothing split from GitHub (`machine_sync/startcheck.py`, local
-  checks only), and every newer version the other PC's note lists in the daily tasks' repos has been taken (the
-  import's own rules: `pending_from_peer`), and no app folder of the task's repos waits in `pending_uv.json` (every
-  failed `uv pip sync` waits there and is retried each run); else refuse and offer **Start anyway**
-  (`allow_unsynced`). Edited or staged tracked files are only a warning (shown with the run, recorded in the claim as
-  `+edits: Trend 2 files`): Start of Day rewrites some of Trend's itself. The claim's commit message lists each repo's
-  HEAD below its first line. The code step follows the other PC in these repos only on their default branch.
+  checks only), and no app folder of the task's repos waits in `pending_uv.json` (every failed `uv pip sync` waits
+  there and is retried each run); else refuse and offer **Start anyway** (`allow_unsynced`). Only warnings, shown with
+  the run: edited or staged tracked files (recorded in the claim as `+edits: Trend 2 files`; Start of Day rewrites
+  some of Trend's itself), and newer versions the other PC's note lists in the daily tasks' repos not taken here yet
+  (the import's own rules: `pending_from_peer`; up to 5 files, each with why, from `state.json`'s `unstable` and
+  `held_deletions`, the peer's heartbeat and its outbox). The claim's commit message lists each repo's HEAD below its
+  first line. The code step follows the other PC in these repos only on their default branch.
 - Claim already held by this PC: start (re-runs and the cycle's second press work). Held by the other PC: refuse
   with "already started on laptop at 10:02". Not reachable: refuse ("could not check GitHub").
 - **Take over** (button after the refusal, with a warning to use it only if the other PC's run ended or it is off):

@@ -191,60 +191,114 @@ class TakeOverFenceTest(StartCheckCase):
 
 
 class PendingDataTest(StartCheckCase):
-    """A daily start waits for the other PC's newer data in the daily tasks' repos (M7)."""
+    """The other PC's newer data in the daily tasks' repos, not taken here yet, is a warning with the start (never a
+    refusal): up to 5 files, each with why, so the user knows whether waiting helps (M7, review item 2)."""
 
-    def note(self, files: dict, fmt: int = 1) -> None:
-        import json
+    def setUp(self) -> None:
         import time
+
+        super().setUp()
+        self.now = time.time()
+
+    def note(self, files: dict, fmt: int = 1, seen_min_ago: float = 2) -> None:
+        import json
 
         state = self.home / "TripSync" / "_state"
         state.mkdir(parents=True, exist_ok=True)
         (state / "laptop.json").write_text(json.dumps({"format": fmt, "machine": "laptop", "files": files,
-                                                       "written": time.time() - 3600}))
+                                                       "written": self.now - seen_min_ago * 60}))
 
-    def state(self, files: dict) -> None:
+    def state(self, files: dict | None = None, **extra) -> None:
         import json
 
-        (self.sync_dir / "state.json").write_text(json.dumps({"files": files}))
+        (self.sync_dir / "state.json").write_text(json.dumps({"files": files or {}, **extra}))
 
-    @staticmethod
-    def version(h: str, t: float, deleted: bool = False) -> list:
+    def staged(self, rel: str, text: str) -> str:
+        from machine_sync.data_files import hash_file
+
+        path = self.home / "TripSync" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return hash_file(path)
+
+    def version(self, h: str | None, min_ago: float, deleted: bool = False) -> list:
+        t = self.now - min_ago * 60
         return [h, t, "laptop", {"laptop": t}, deleted]
 
-    def test_newer_version_not_arrived_refuses_then_starts_anyway(self) -> None:
-        self.note({"Trend/data/x.csv": self.version("abc", 2000.0)})
+    def started_with(self) -> list[str]:
         r = self.runner()
-        self.assert_refused(r, "the laptop's latest changes have not arrived yet (1 file, e.g. Trend/data/x.csv)",
-                            "start anyway")
-        self.assertIsNone(r.start("sod", allow_unsynced=True))
+        self.assertIsNone(r.start("sod"))  # a warning never refuses
+        return r.warnings["sod"]
 
-    def test_newer_version_of_a_file_here_refuses(self) -> None:
+    def test_arrived_but_not_taken_yet_says_next_sync(self) -> None:
+        h = self.staged("Trend/data/x.csv", "new")
+        self.note({"Trend/data/x.csv": self.version(h, 3)})
+        self.assertEqual(self.started_with(), ["the laptop's newer data is not here yet (1 file): Trend/data/x.csv "
+                                               "(changed on the laptop 3 min ago, should arrive with the next sync)"])
+
+    def test_not_arrived_and_peer_quiet_says_when_it_was_last_seen(self) -> None:
+        self.note({"Trend/data/x.csv": self.version("abc", 70)}, seen_min_ago=60)
+        self.assertIn("Trend/data/x.csv (laptop last seen 60 min ago)", self.started_with()[0])
+
+    def test_held_deletion_says_it_needs_allow_deletes(self) -> None:
+        self.state({"Trend/data/old.csv": {"h": "abc", "t": 1.0, "m": "laptop", "vv": {"laptop": 1.0}, "del": False,
+                                           "size": 1, "mt": 0}}, held_deletions=["Trend/data/old.csv"])
+        self.note({"Trend/data/old.csv": self.version(None, 5, deleted=True)})
+        self.assertIn("Trend/data/old.csv (held deletion (needs --allow-deletes))", self.started_with()[0])
+
+    def test_file_in_use_here_says_so(self) -> None:
+        self.state(unstable=["Trend/data/x.csv"])
+        self.note({"Trend/data/x.csv": self.version("abc", 5)})
+        self.assertIn("Trend/data/x.csv (open or in use here)", self.started_with()[0])
+
+    def test_held_while_a_daily_task_runs_here(self) -> None:
+        from config import TaskConfig
+
+        self.note({"Trend/data/x.csv": self.version("abc", 5)})
+        sod = TaskConfig(id="sod", label="MTFA Start of Day", cwd=str(self.trend), cmd=[sys.executable, "-c", "pass"],
+                         claim="daily")
+        cycle = TaskConfig(id="cycle", label="IBKR paper cycle", cwd=str(self.trend),
+                           cmd=[sys.executable, "-c", "import time; time.sleep(3)"], claim="daily")
+        r = TaskRunner([sod, cycle], self.home / "logs", claimer=self.claimer, sync_dir=self.sync_dir,
+                       pruner=lambda: None)
+        self.runners.append(r)
+        self.assertIsNone(r.start("cycle"))
+        self.assertIsNone(r.start("sod"))
+        self.assertIn("Trend/data/x.csv (held while a daily task runs here)", r.warnings["sod"][0])
+
+    def test_names_five_files_and_counts_the_rest(self) -> None:
+        self.note({f"Trend/data/f{i}.csv": self.version(f"h{i}", 2) for i in range(7)})
+        said = self.started_with()[0]
+        self.assertTrue(said.startswith("the laptop's newer data is not here yet (7 files): Trend/data/f0.csv"), said)
+        self.assertEqual(said.count("should arrive with the next sync"), 5)
+        self.assertTrue(said.endswith("; and 2 more"), said)
+
+    def test_newer_version_of_a_file_here_is_pending(self) -> None:
         self.state({"Trend/data/x.csv": {"h": "old", "t": 1000.0, "m": "desktop", "vv": {"desktop": 1000.0},
                                          "del": False, "size": 1, "mt": 0}})
-        self.note({"Trend/data/x.csv": [*self.version("new", 2000.0)[:3], {"desktop": 1000.0, "laptop": 2000.0},
-                                        False]})
-        self.assert_refused(self.runner(), "(1 file, e.g. Trend/data/x.csv)")
+        self.note({"Trend/data/x.csv": ["new", self.now, "laptop", {"desktop": 1000.0, "laptop": self.now}, False]})
+        self.assertIn("(1 file): Trend/data/x.csv", self.started_with()[0])
 
-    def test_nothing_pending_starts(self) -> None:
+    def test_nothing_pending_no_warning(self) -> None:
         self.state({"Trend/data/x.csv": {"h": "abc", "t": 2000.0, "m": "laptop", "vv": {"laptop": 2000.0},
                                          "del": False, "size": 1, "mt": 0}})
-        self.note({"Trend/data/x.csv": self.version("abc", 2000.0),  # arrived
-                   "Trend/README.md": self.version("tracked", 3000.0),  # tracked by Git here: never taken
-                   "Trend/data/gone.csv": self.version(None, 3000.0, deleted=True),  # deleted, and not here
-                   "Trend/data/half.csv.tmp": self.version("tmp", 3000.0),  # not data on this PC
-                   "FOMC/data/y.csv": self.version("other", 3000.0)})  # a repo no daily task uses
-        self.assertIsNone(self.runner().start("sod"))
+        self.note({"Trend/data/x.csv": ["abc", 2000.0, "laptop", {"laptop": 2000.0}, False],  # arrived
+                   "Trend/README.md": self.version("tracked", 3),  # tracked by Git here: never taken
+                   "Trend/data/gone.csv": self.version(None, 3, deleted=True),  # deleted, and not here
+                   "Trend/data/half.csv.tmp": self.version("tmp", 3),  # not data on this PC
+                   "FOMC/data/y.csv": self.version("other", 3)})  # a repo no daily task uses
+        self.assertEqual(self.started_with(), [])
 
     def test_this_pcs_newer_version_is_not_pending(self) -> None:
         self.state({"Trend/data/x.csv": {"h": "mine", "t": 500.0, "m": "desktop",
                                          "vv": {"laptop": 2000.0, "desktop": 500.0}, "del": False, "size": 1,
                                          "mt": 0}})
-        self.note({"Trend/data/x.csv": self.version("theirs", 2000.0)})  # this PC's was made from it
-        self.assertIsNone(self.runner().start("sod"))
+        self.note({"Trend/data/x.csv": ["theirs", 2000.0, "laptop", {"laptop": 2000.0}, False]})  # ours came from it
+        self.assertEqual(self.started_with(), [])
 
     def test_note_from_a_newer_tool_is_not_read(self) -> None:
-        self.note({"Trend/data/x.csv": self.version("abc", 2000.0)}, fmt=99)
-        self.assertIsNone(self.runner().start("sod"))
+        self.note({"Trend/data/x.csv": self.version("abc", 2)}, fmt=99)
+        self.assertEqual(self.started_with(), [])
 
 
 class PendingLibrariesTest(StartCheckCase):

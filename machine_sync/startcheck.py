@@ -1,7 +1,7 @@
 """Before a daily task starts (the launcher, tasks.yaml `claim`): is this PC in step with GitHub and the other PC?
 Every check is local (Git's last fetch, the sync's own files): none needs the network. The launcher refuses the
-start when one fails and offers to start anyway (review of 18 Nov 2026, H1); before a take-over it asks whether the
-other PC may still be running (H3)."""
+start when one fails and offers to start anyway (review of 18 Nov 2026, H1), or only warns (edited tracked files,
+the other PC's data not here yet); before a take-over it asks whether the other PC may still be running (H3)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,11 +9,13 @@ from pathlib import Path
 from .code_sync import _is_ancestor, default_branch, pending_uv
 from .daily import _repo_of_path, busy_repos
 from . import NOTE_FORMAT
+from .data_files import hash_file, sqlite_open
 from .data_sync import load_state, pending_from_peer, read_alive, read_note
 from .gitops import out, read_repo
 from .settings import LAUNCHER_REPO, Settings
 
 PEER_RECENT_S = 15 * 60  # the other PC's sync ran this recently: it is on
+PENDING_SHOWN = 5  # files named in the warning about the other PC's data not taken yet
 
 
 def _plural(n: int, word: str) -> str:
@@ -81,16 +83,49 @@ def code_problems(cfg: Settings, repos: list[str]) -> list[str]:
     return lines
 
 
-def data_pending(cfg: Settings, repos: set[str]) -> str | None:
-    """A line when the other PC's note lists newer versions in `repos` that this PC has not taken yet (M7)."""
+def _arrived(cfg: Settings, rel: str, p: dict) -> bool:
+    staged = cfg.peer_outbox / rel
+    try:
+        return staged.is_file() and hash_file(staged) == p["h"]
+    except OSError:
+        return False
+
+
+def _why_pending(cfg: Settings, rel: str, p: dict, state: dict, peer_seen: float, now: float,
+                 held_here: bool) -> str:
+    """Why the other PC's version of rel is not here yet, and whether waiting for the next sync helps."""
+    peer = cfg.peer
+    if p["del"] and rel in set(state.get("held_deletions") or []):
+        return "held deletion (needs --allow-deletes)"
+    if rel in set(state.get("unstable") or []) or sqlite_open(cfg.home / rel):
+        return "open or in use here"
+    if held_here:
+        return "held while a daily task runs here"
+    if not p["del"] and not _arrived(cfg, rel, p) and now - peer_seen > PEER_RECENT_S:
+        return f"{peer} last seen {_ago(now - peer_seen)}"
+    what = "deleted" if p["del"] else "changed"
+    return f"{what} on the {peer} {_ago(max(0.0, now - p['t']))}, should arrive with the next sync"
+
+
+def data_pending(cfg: Settings, repos: set[str], now: float, held_here: bool = False) -> str | None:
+    """A warning when the other PC's note lists newer versions in `repos` that this PC has not taken yet (M7):
+    the count and up to PENDING_SHOWN files, each with why (only "should arrive with the next sync" means waiting
+    helps). Never a refusal."""
     note = read_note(cfg, cfg.peer)
     if not note or note.get("format", 0) > NOTE_FORMAT:
         return None
-    waiting = pending_from_peer(cfg, load_state(cfg), note, repos)
+    state = load_state(cfg)
+    waiting = pending_from_peer(cfg, state, note, repos)
     if not waiting:
         return None
-    return (f"the {cfg.peer}'s latest changes have not arrived yet ({_plural(len(waiting), 'file')}, e.g. "
-            f"{waiting[0]}): wait for the next sync (every 5 minutes)")
+    try:
+        seen = max(float(note.get("written") or 0.0), float(read_alive(cfg, cfg.peer) or 0.0))
+    except (TypeError, ValueError):
+        seen = 0.0
+    named = [f"{rel} ({_why_pending(cfg, rel, p, state, seen, now, held_here)})" for rel, p in waiting[:PENDING_SHOWN]]
+    more = f"; and {len(waiting) - PENDING_SHOWN} more" if len(waiting) > PENDING_SHOWN else ""
+    return (f"the {cfg.peer}'s newer data is not here yet ({_plural(len(waiting), 'file')}): " + "; ".join(named)
+            + more)
 
 
 def libraries_pending(cfg: Settings, repos: list[str]) -> list[str]:

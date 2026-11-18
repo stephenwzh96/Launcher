@@ -173,14 +173,10 @@ class TaskRunner:
         """None when this PC is in step, else why not (start anyway: the page asks again and passes allow_unsynced):
         every repo the task uses (and the launcher) is on its default branch, with no Git operation in progress,
         nothing unpushed and nothing split from GitHub (H1; edited tracked files are only a warning:
-        _start_warnings); the other PC's newer data in the daily tasks' repos has arrived (M7); the sync updated the
-        libraries of the task's repos after their last code change (L13)."""
+        _start_warnings); the sync updated the libraries of the task's repos after their last code change (L13)."""
         lines = startcheck.code_problems(cfg, self._task_repos(cfg, task))
         lines += startcheck.libraries_pending(cfg, startcheck.task_repos(cfg, str(task.resolved_cwd()),
                                                                          task.resolved_cmd(), launcher=False))
-        daily = {r for t in self.tasks.values() if t.claim for r in self._task_repos(cfg, t)}
-        if waiting := startcheck.data_pending(cfg, daily):
-            lines.append(waiting)
         if not lines:
             return None
         return (f"{task.label}: this PC is not in step with GitHub's main and the {cfg.peer}, so today's run would "
@@ -199,8 +195,14 @@ class TaskRunner:
                 f"you have checked that the {cfg.peer}'s run has ended (its launcher, or the execution dashboard).")
 
     def _start_warnings(self, task: TaskConfig, cfg: Settings) -> list[str]:
-        """What a start goes ahead despite, shown with the run: edited tracked files in the task's repos."""
-        return startcheck.edit_warnings(cfg, self._task_repos(cfg, task))
+        """What a start goes ahead despite, shown with the run: edited tracked files in the task's repos; the other
+        PC's newer data in the daily tasks' repos not here yet (M7: up to 5 files, each with why)."""
+        warnings = startcheck.edit_warnings(cfg, self._task_repos(cfg, task))
+        daily = {r for t in self.tasks.values() if t.claim for r in self._task_repos(cfg, t)}
+        running_here = any(self.runs.get(t.id, {}).get("state") == "running" for t in self.tasks.values() if t.claim)
+        if waiting := startcheck.data_pending(cfg, daily, time.time(), held_here=running_here):
+            warnings.append(waiting)
+        return warnings
 
     @staticmethod
     def _guarded(check, task: TaskConfig, cfg: Settings) -> str | None:
