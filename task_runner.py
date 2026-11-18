@@ -88,12 +88,19 @@ def _claim_on_github(task: TaskConfig, day: str, machine: str, take_over: bool) 
     return day_claims.claim(HERE, task.claim, day, machine, take_over=take_over)
 
 
+def _prune_on_github() -> None:
+    day_claims.prune(HERE)
+
+
 class TaskRunner:
     def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S,
-                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR):
+                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None):
         self.tasks = {t.id: t for t in tasks}
         self.stop_grace_s = stop_grace_s
         self.claimer = claimer  # (task, day, machine, take_over) -> ClaimResult
+        # deletes old claims from GitHub after a claimed start, in the background; only beside the real claimer, so a
+        # runner with a stand-in claimer (tests) never reaches GitHub
+        self.pruner = pruner or (_prune_on_github if claimer is _claim_on_github else (lambda: None))
         self.sync_dir = Path(sync_dir)
         self.refusals: dict[str, str] = {}  # task id -> the PC holding today's claim, after a refused start
         self.start_lock = threading.Lock()
@@ -193,9 +200,18 @@ class TaskRunner:
                 if refused := self._check_claim(task, take_over):
                     return refused
                 with self.lock:
-                    return self._spawn(task_id, task)
+                    failed = self._spawn(task_id, task)
             finally:
                 sync_lock.release(self.sync_dir)
+            if failed is None:  # housekeeping on GitHub: never on the start's path, never under run.lock
+                threading.Thread(target=self._prune, daemon=True).start()
+            return failed
+
+    def _prune(self) -> None:
+        try:
+            self.pruner()
+        except Exception:  # noqa: BLE001 - best effort: the next claimed start prunes again
+            pass
 
     def _spawn(self, task_id: str, task: TaskConfig) -> str | None:
         """Start the task's process (self.lock held)."""

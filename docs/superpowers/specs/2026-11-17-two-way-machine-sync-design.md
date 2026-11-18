@@ -190,7 +190,8 @@ wins.
   force-pushes this PC's claim and starts.
 - The sync tool records today's claim (`daily_claim.json`); the launcher's Start of Day reminder is not shown on the
   PC that does not hold it.
-- Claims older than 30 days are deleted when a new one is made.
+- Claims older than 30 days are deleted after a claimed task has started, in the background (never holding the
+  start or run.lock).
 
 ### What Stephen sees (`C:\Users\User\MachineSync\sync_status.txt`)
 

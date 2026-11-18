@@ -181,3 +181,58 @@ class AgainLabelTest(unittest.TestCase):
         tasks = {t["id"]: t for t in TaskRunner([paper, sod], tmp / "logs", sync_dir=tmp).status()["tasks"]}
         self.assertEqual(tasks["paper"]["again_label"], "Start trading")
         self.assertIsNone(tasks["sod"]["again_label"])
+
+
+class PruneOffStartPathTest(unittest.TestCase):
+    """Old claims are pruned after the task started, in the background and outside run.lock (review of 18 Nov, M9):
+    a slow GitHub never holds a start, and a refused start prunes nothing."""
+
+    def setUp(self) -> None:
+        import threading
+
+        self.tmp = Path(tempfile.mkdtemp(prefix="prune-"))
+        self.sync_dir = self.tmp / "MachineSync"
+        self.sync_dir.mkdir()
+        (self.sync_dir / "machine.txt").write_text("desktop\n")
+        self.pruned = threading.Event()
+        self.seen: dict = {}
+
+    def pruner(self) -> None:
+        import threading
+
+        self.seen["lock_file"] = (self.sync_dir / "run.lock").exists()
+        self.seen["thread"] = threading.current_thread() is not threading.main_thread()
+        self.pruned.set()
+
+    def runner(self, result: ClaimResult) -> TaskRunner:
+        task = TaskConfig(id="sod", label="MTFA Start of Day", cwd=".", cmd=[sys.executable, "-c", "pass"],
+                          claim="daily")
+        r = TaskRunner([task], self.tmp / "logs", claimer=FakeClaimer(result), sync_dir=self.sync_dir,
+                       pruner=self.pruner)
+        self.addCleanup(lambda: [p.wait(30) for p in r.procs.values()])
+        return r
+
+    def test_pruned_after_start_in_background_without_the_lock(self) -> None:
+        self.assertIsNone(self.runner(ClaimResult(True, "desktop", "2026-11-18T09:41:00")).start("sod"))
+        self.assertTrue(self.pruned.wait(10))
+        self.assertEqual(self.seen, {"lock_file": False, "thread": True})
+
+    def test_refused_start_prunes_nothing(self) -> None:
+        self.runner(ClaimResult(False, "laptop", "2026-11-18T09:41:00")).start("sod")
+        self.assertFalse(self.pruned.wait(0.5))
+
+    def test_stand_in_claimer_never_prunes_on_github(self) -> None:
+        from unittest import mock
+
+        import task_runner
+
+        task = TaskConfig(id="sod", label="MTFA Start of Day", cwd=".", cmd=[sys.executable, "-c", "pass"],
+                          claim="daily")
+        with mock.patch.object(task_runner, "_prune_on_github", side_effect=AssertionError("GitHub reached")) as real:
+            r = TaskRunner([task], self.tmp / "logs", claimer=FakeClaimer(ClaimResult(True, "desktop", "x")),
+                           sync_dir=self.sync_dir)
+            self.addCleanup(lambda: [p.wait(30) for p in r.procs.values()])
+            self.assertIsNone(r.start("sod"))
+            import time
+            time.sleep(0.5)
+        real.assert_not_called()

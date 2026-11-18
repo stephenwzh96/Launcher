@@ -98,3 +98,8 @@ class ClaimsTest(TempDirCase):
         refs = run(self.desk, "ls-remote", "origin", "refs/daily-claims/*")
         self.assertIn("2026-11-17", refs)
         self.assertNotIn("2026-09-01", refs)
+
+    def test_claim_itself_prunes_nothing(self) -> None:
+        claim(self.desk, "daily", "2026-01-05", "desktop")  # long past: prune() would delete it
+        claim(self.desk, "daily", date.today().isoformat(), "desktop")
+        self.assertIn("2026-01-05", run(self.desk, "ls-remote", "origin", "refs/daily-claims/*"))

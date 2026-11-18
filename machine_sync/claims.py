@@ -3,7 +3,8 @@ to its GitHub repo, `refs/daily-claims/<claim>/<YYYY-MM-DD>` -> a commit with no
 GitHub takes only the first push: a second, unrelated commit is not a fast-forward and is rejected, so two PCs can
 never both hold a day. The holder may re-claim (re-runs, the IBKR cycle's second press). Take-over replaces the claim
 only if it is still the one this PC saw (force-with-lease), so two take-overs at once still leave one holder.
-Every network call has a time limit: a stalled GitHub refuses the start instead of hanging the launcher."""
+Every network call has a time limit: a stalled GitHub refuses the start instead of hanging the launcher. Old claims
+are pruned separately (prune(), after the start)."""
 from __future__ import annotations
 
 import re
@@ -75,8 +76,7 @@ def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = Fals
     how = [f"--force-with-lease={ref}:{lease}"] if take_over else []
     pushed = git(repo, *NET, "push", "--porcelain", *how, "origin", f"{sha}:{ref}", timeout=timeout)
     if pushed.returncode == 0:
-        git(repo, "update-ref", ref, sha)
-        prune(repo, timeout=timeout)  # from today's date, never the claim's day: a stray day must not delete live ones
+        git(repo, "update-ref", ref, sha)  # no prune here: the launcher prunes after the task started (prune())
         return ClaimResult(True, holder=machine, at=at, sha=sha)
     said = (pushed.stdout + pushed.stderr).lower()
     if pushed.returncode == 124 or not any(word in said for word in _REJECTED):
@@ -90,7 +90,9 @@ def claim(repo: Path, claim: str, day: str, machine: str, take_over: bool = Fals
 
 
 def prune(repo: Path, keep_days: int = 30, today: date | None = None, timeout: float = NET_TIMEOUT_S) -> None:
-    """Delete claims older than keep_days from GitHub (best effort, one push)."""
+    """Delete claims older than keep_days from GitHub (best effort, one push). Counted from today's date, never a
+    claim's day: a stray day must not delete live ones. The launcher runs it in the background once a daily task has
+    started, outside run.lock, so a slow GitHub never holds a start or a sync run."""
     cutoff = (today or date.today()) - timedelta(days=keep_days)
     old = []
     for line in out(repo, *NET, "ls-remote", "origin", f"{REF_PREFIX}/*", timeout=timeout).splitlines():
