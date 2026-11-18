@@ -185,8 +185,10 @@ class TaskRunner:
                 with self.lock:
                     return self._spawn(task_id, task)
             if not sync_lock.acquire(self.sync_dir, wait_s=self.sync_wait_s):
-                return (f"{task.label}: this PC's sync is busy (MachineSync\\run.lock) and did not finish in "
-                        f"{self.sync_wait_s:.0f} s; not started. Try again in a minute.")
+                pid = sync_lock.holder_pid(self.sync_dir)
+                return (f"{task.label}: this PC's sync is busy (MachineSync\\run.lock"
+                        f"{f', process {pid}' if pid else ''}) and did not finish in {self.sync_wait_s:.0f} s; "
+                        "not started. Try again in a minute.")
             try:
                 if refused := self._check_claim(task, take_over):
                     return refused
