@@ -34,7 +34,8 @@ def _dry_run() -> None:
     from .data_sync import _newer, load_state, read_note, sync_data
     from .procs import Proc
 
-    with tempfile.TemporaryDirectory(prefix="msync-selftest-") as tmp:
+    # a file still held for a moment (antivirus, the search indexer) must not fail the self-test, so the update
+    with tempfile.TemporaryDirectory(prefix="msync-selftest-", ignore_cleanup_errors=True) as tmp:
         desk, lap = (Settings(home=Path(tmp) / m, machine=m, repos=(), plain_roots={"Data": []}) for m in MACHINES)
         made = lap.home / "Data" / "a.csv"
         made.parent.mkdir(parents=True)

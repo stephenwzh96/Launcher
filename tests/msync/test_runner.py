@@ -198,6 +198,35 @@ class RunnerTest(TempDirCase):
     def test_selftest_passes(self) -> None:
         self.assertEqual(main(["selftest"]), 0)
 
+    def test_selftest_passes_when_its_temp_folder_cannot_be_removed(self) -> None:
+        """A file in the self-test's temp folder still held open (antivirus, the indexer) must not refuse an update
+        (review item 9)."""
+        from unittest import mock
+
+        from machine_sync import data_sync
+        from msync.helpers import locked
+
+        import shutil
+
+        held, left, real = [], [], data_sync.save_state
+
+        def save_and_hold(cfg, state):
+            real(cfg, state)
+            if not held:  # a file in the temp folder that something else keeps open past the self-test
+                (cfg.sync_dir / "scanned.txt").write_text("held by a scanner")
+                held.append(locked(cfg.sync_dir / "scanned.txt", share_read=True))
+                left.append(cfg.home.parent)
+
+        try:
+            with mock.patch.object(data_sync, "save_state", save_and_hold):
+                self.assertEqual(main(["selftest"]), 0)
+            self.assertTrue(held)
+        finally:
+            for h in held:
+                h.__exit__(None, None, None)
+            for folder in left:  # what the self-test could not remove
+                shutil.rmtree(folder, ignore_errors=True)
+
     def test_install_copies_tool_and_writes_machine(self) -> None:
         install(self.desk, register=False)
         tool = self.desk.sync_dir / "tool"
