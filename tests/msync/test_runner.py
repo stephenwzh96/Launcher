@@ -289,7 +289,7 @@ class RunnerTest(TempDirCase):
         run(cfg.repo_path("Marco/launcher"), "fetch")
         self.assertIn("failed its self-test", self_update(cfg))
 
-    def test_runner_holds_self_update_while_daily_task_runs_or_code_is_kept(self) -> None:
+    def test_runner_holds_self_update_only_while_a_daily_task_runs(self) -> None:
         from unittest import mock
 
         from machine_sync import runner
@@ -304,10 +304,10 @@ class RunnerTest(TempDirCase):
             now = datetime.now() + timedelta(minutes=5)
             record_claim(self.desk.sync_dir, "daily", now.strftime("%Y-%m-%d"), "desktop",
                          (now - timedelta(minutes=1)).isoformat(timespec="seconds"))
-            run_once(self.desk, now=now, procs=[], tasks=tasks)
-            run_once(self.desk, now=now, procs=[], tasks=tasks, update_frozen=True)
-        self.assertEqual(seen, ["a daily task is running here",
-                                "this PC's code is kept for today's daily run until 09:00", None])
+            run_once(self.desk, now=now, procs=[], tasks=tasks)  # holds the day, nothing running: updates
+            with mock.patch.object(runner, "processes", lambda: None):  # cannot tell: fail closed
+                run_once(self.desk, now=now, tasks=tasks)
+        self.assertEqual(seen, ["a daily task is running here", None, "a daily task is running here"])
 
     def test_task_xml_has_all_triggers(self) -> None:
         xml = task_xml(r"C:\Py\pythonw.exe", r"C:\Users\User\MachineSync\tool\run_sync.py", "PC\\User")

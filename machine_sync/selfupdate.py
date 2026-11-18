@@ -1,8 +1,7 @@
 """The installed tool (MachineSync\\tool) updates itself from the launcher repo's origin/main, never from whatever
 branch the launcher checkout is on, and only after the new copy passes its self-test (design, "Pieces"). Not while a
-daily task runs on this PC or this PC's code is kept for today's daily run (the caller says why: `hold`), nor while
-MachineSync\\hold_update.txt exists. The copy it replaced stays in MachineSync\\tool.old until the next update
-(rollback: README, "Machine sync")."""
+daily task runs on this PC (the caller says why: `hold`), nor while MachineSync\\hold_update.txt exists. The copy it
+replaced stays in MachineSync\\tool.old until the next update (rollback: README, "Machine sync")."""
 from __future__ import annotations
 
 import shutil
@@ -40,7 +39,7 @@ HOLD_FILE = "hold_update.txt"
 
 def self_update(cfg: Settings, python: str | None = None, hold: str | None = None) -> str | None:
     """A message when the tool was updated, or an update waits or was refused; None when nothing changed. `hold`:
-    why an update must wait this run (a daily task running here, today's code freeze)."""
+    why an update must wait this run (a daily task running here)."""
     tool = cfg.sync_dir / "tool"
     launcher = cfg.repo_path("Marco/launcher")
     if not (tool / "machine_sync").exists() or not (launcher / ".git").exists():
