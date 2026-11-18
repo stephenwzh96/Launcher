@@ -135,8 +135,8 @@ either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-desig
     `C:\Users\User\DesktopSync`, Tailscale only). The newer change wins on both PCs (newer by the versions' history, so a clock that is off
     does not decide; the status warns when the two clocks differ by more than 30 s); a file changed on both, and
     every deletion, is kept in `C:\Users\User\MachineSync\backup\<date>` for 60 days.
-  - trading safety: while a daily task runs, nothing in Trend or IBKR changes on that PC; on the PC that holds the
-    day's claim, their code stays fixed until 09:00 the next day.
+  - trading safety: while a daily task runs (started from the launcher or from a terminal), nothing in Trend or
+    IBKR changes on that PC; on the PC that holds the day's claim, their code stays fixed until 09:00 the next day.
 - **Status:** `C:\Users\User\MachineSync\sync_status.txt` (log: `sync.log`). It names the other PC's last run,
   today's claim, each repo's state and the data moved.
 - **Commands** (standalone Python, from `C:\Users\User\MachineSync\tool`):

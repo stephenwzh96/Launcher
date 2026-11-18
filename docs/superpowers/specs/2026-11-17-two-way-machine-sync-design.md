@@ -99,7 +99,9 @@ paper cycle) must also never run twice for the same day.
 - Daily tasks are those in `tasks.yaml` with `claim: daily`. The tool reads `tasks.yaml` through the launcher venv
   (a JSON dump), falling back to the last good dump.
 - **Busy repos:** every repo that a daily task's folder or command line points into (Trend and IBKR today).
-- **Running:** a process whose command line matches a daily task's command.
+- **Running:** a process whose command line matches a daily task's command, or runs its script (by file name) or
+  module and subcommand (`-m src.operations run`) from any folder, so a run started from a terminal counts; or the
+  task's progress file (Trend's `data/logs/sod_progress.json`) says running and names a live process.
 - **Code freeze:** on the PC that holds today's daily claim, busy repos do not change code from the claim until 09:00
   Sydney the next day (the overnight cycle trades with the code that built its list). `machine_sync.py run
   --update-frozen` updates them anyway, by hand.

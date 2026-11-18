@@ -79,3 +79,40 @@ class DailyTest(TempDirCase):
 
     def test_processes_lists_this_process(self) -> None:
         self.assertIn(os.getpid(), {p.pid for p in processes()})
+
+    def test_running_started_from_a_terminal(self) -> None:
+        """A daily job started by hand (relative paths, another folder) is running too (review of 18 Nov, H4)."""
+        sod = Proc(20, None, r'"C:\Python312\python.exe" tools\daily_cycle.py')
+        sod_unix = Proc(21, None, "python ./tools/daily_cycle.py --day 2026-11-18")
+        cycle = Proc(22, None, "python -m src.operations run --mode paper --envelopes ../Trend/AIJPMT1A_build/live/targets")
+        status = Proc(23, None, "python -m src.operations status")
+        editor = Proc(24, None, r'"C:\Program Files\Notepad++\notepad++.exe" C:\Users\User\Trend\AIJPMT1A_build\tools\daily_cycle.py')
+        tasks = [self.ibkr, self.sod]
+        self.assertEqual(running_tasks(tasks, [sod]), {"aijpmt1a-refresh"})
+        self.assertEqual(running_tasks(tasks, [sod_unix]), {"aijpmt1a-refresh"})
+        self.assertEqual(running_tasks(tasks, [cycle]), {"ibkr-paper-cycle"})
+        self.assertEqual(running_tasks(tasks, [status, editor]), set())
+
+    def test_running_from_progress_file(self) -> None:
+        progress = self.tmp / "Trend" / "AIJPMT1A_build" / "data" / "logs" / "sod_progress.json"
+        progress.parent.mkdir(parents=True)
+        sod = {**self.sod, "progress_file": str(progress)}
+        other = Proc(4321, None, "python something_else.py")
+        progress.write_text(json.dumps({"schema": "sod_progress/1", "state": "running", "pid": 4321}))
+        self.assertEqual(running_tasks([sod], [other]), {"aijpmt1a-refresh"})
+        self.assertEqual(running_tasks([sod], []), set())  # its process is gone: abandoned, not running
+        progress.write_text(json.dumps({"schema": "sod_progress/1", "state": "done", "pid": 4321}))
+        self.assertEqual(running_tasks([sod], [other]), set())
+        self.assertEqual(running_tasks([self.sod], [other]), set())  # a dump from before progress_file was listed
+
+    def test_dump_lists_progress_file(self) -> None:
+        import subprocess
+        import sys
+
+        from machine_sync.daily import _DUMP
+
+        launcher = Path(__file__).resolve().parents[2]  # this checkout's tasks.yaml, read through its config.py
+        done = subprocess.run([sys.executable, "-I", "-c", _DUMP], cwd=launcher, capture_output=True, text=True)
+        tasks = {t["id"]: t for t in json.loads(done.stdout)}
+        self.assertTrue(tasks["aijpmt1a-refresh"]["progress_file"].endswith("sod_progress.json"))
+        self.assertIsNone(tasks["ibkr-paper-cycle"]["progress_file"])

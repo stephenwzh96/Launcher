@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -22,8 +23,11 @@ here = Path.cwd()
 sys.path.insert(0, str(here))
 from config import load_tasks
 tasks = load_tasks(here / "tasks.yaml")
+def progress(t):
+    f = t.resolved_progress_file() if hasattr(t, "resolved_progress_file") else None
+    return str(f) if f else None
 print(json.dumps([{"id": t.id, "claim": getattr(t, "claim", None), "cwd": str(t.resolved_cwd()),
-                   "cmd": t.resolved_cmd()} for t in tasks]))
+                   "cmd": t.resolved_cmd(), "progress_file": progress(t)} for t in tasks]))
 """
 
 
@@ -78,13 +82,63 @@ def busy_repos(cfg: Settings, tasks: list[dict]) -> set[str]:
     return repos
 
 
+def _tokens(cmdline: str) -> list[str]:
+    """A Windows command line's arguments, unquoted and normalised (backslashes, lower case)."""
+    try:
+        parts = shlex.split(cmdline, posix=False)
+    except ValueError:  # an unbalanced quote
+        parts = cmdline.split()
+    return [_norm(p) for p in parts]
+
+
+def _signature(cmd: list[str]) -> tuple[str, list[str]] | None:
+    """What identifies a daily task's process however it was started (the launcher's absolute paths, or a terminal's
+    relative ones): ("module", ["-m", module, subcommand]) or ("script", [file name])."""
+    args = cmd[1:]
+    if len(args) >= 2 and args[0] == "-m":
+        sig = ["-m", _norm(args[1])]
+        if len(args) >= 3 and not args[2].startswith("-"):
+            sig.append(_norm(args[2]))
+        return "module", sig
+    if args and args[0].lower().endswith(".py"):
+        return "script", [_norm(args[0]).rsplit("\\", 1)[-1]]
+    return None
+
+
+def _matches(sig: tuple[str, list[str]], tokens: list[str]) -> bool:
+    kind, want = sig
+    if kind == "module":
+        n = len(want)
+        return any(tokens[i:i + n] == want for i in range(len(tokens) - n + 1))
+    runner = tokens[0].rsplit("\\", 1)[-1] if tokens else ""
+    if not (runner.startswith("python") or runner in ("py.exe", "py")):
+        return False  # an editor with the script open is not the task
+    return any(t.rsplit("\\", 1)[-1] == want[0] for t in tokens[1:])
+
+
+def _progress_running(path: str | None, pids: set[int]) -> bool:
+    """The task's progress file (Trend's sod_progress.json) says running, and its process is alive."""
+    if not path:
+        return False
+    try:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        return doc.get("state") == "running" and int(doc.get("pid") or 0) in pids
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def running_tasks(tasks: list[dict], procs: list[Proc]) -> set[str]:
-    """Daily tasks with a process whose command line holds all of the task's arguments."""
+    """Daily tasks running on this PC, started by the launcher or from a terminal: a process whose command line holds
+    all of the task's arguments, or runs its script (by file name) or module and subcommand (`-m src.operations
+    run`) from any folder; or the task's progress file says running and names a live process."""
     lines = [_norm(p.cmdline) for p in procs if p.cmdline]
+    tokens = [_tokens(p.cmdline) for p in procs if p.cmdline]
+    pids = {p.pid for p in procs}
     running = set()
     for task in tasks:
         args = [_norm(a) for a in task["cmd"][1:]]
-        if args and any(all(a in line for a in args) for line in lines):
+        sig = _signature(task["cmd"])
+        if (args and any(all(a in line for a in args) for line in lines))                 or (sig and any(_matches(sig, t) for t in tokens))                 or _progress_running(task.get("progress_file"), pids):
             running.add(task["id"])
     return running
 
