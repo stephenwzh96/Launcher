@@ -138,7 +138,9 @@ def running_tasks(tasks: list[dict], procs: list[Proc]) -> set[str]:
     for task in tasks:
         args = [_norm(a) for a in task["cmd"][1:]]
         sig = _signature(task["cmd"])
-        if (args and any(all(a in line for a in args) for line in lines))                 or (sig and any(_matches(sig, t) for t in tokens))                 or _progress_running(task.get("progress_file"), pids):
+        by_args = bool(args) and any(all(a in line for a in args) for line in lines)
+        by_name = sig is not None and any(_matches(sig, t) for t in tokens)
+        if by_args or by_name or _progress_running(task.get("progress_file"), pids):
             running.add(task["id"])
     return running
 
