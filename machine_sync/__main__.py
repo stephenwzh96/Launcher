@@ -12,10 +12,53 @@ MODULES = ("settings", "gitops", "code_sync", "data_files", "data_sync", "procs"
 
 
 def selftest() -> int:
-    """Every module imports (the self-update runs this on a new copy before installing it)."""
+    """Every module imports, and the core decisions give the right answers on made-up data (the self-update runs
+    this on a new copy before installing it: an exception refuses the update)."""
     for name in MODULES:
         importlib.import_module(f"{__package__ or 'machine_sync'}.{name}")
+    _dry_run()
     return 0
+
+
+def _dry_run() -> None:
+    """Two made-up PCs in a temporary folder (no network, no Git, no real path): a file made on the laptop reaches
+    the desktop; then the rules the runs rely on, one example each. Raises when one is wrong."""
+    import os
+    import shutil
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from .daily import running_tasks
+    from .data_files import skipped
+    from .data_sync import _newer, load_state, read_note, sync_data
+    from .procs import Proc
+
+    with tempfile.TemporaryDirectory(prefix="msync-selftest-") as tmp:
+        desk, lap = (Settings(home=Path(tmp) / m, machine=m, repos=(), plain_roots={"Data": []}) for m in MACHINES)
+        made = lap.home / "Data" / "a.csv"
+        made.parent.mkdir(parents=True)
+        made.write_text("1")
+        now = time.time() + 1000
+        os.utime(made, (now - 600, now - 600))
+        for cfg, other in ((desk, lap), (lap, desk), (desk, lap), (lap, desk)):
+            now += 61
+            sync_data(cfg, load_state(cfg), read_note(cfg, cfg.peer), now)
+            mirror = other.home / cfg.own_outbox.name  # Syncthing: this PC's outbox, as the other PC sees it
+            shutil.rmtree(mirror, ignore_errors=True)
+            shutil.copytree(cfg.own_outbox, mirror)
+        arrived = desk.home / "Data" / "a.csv"
+        if not arrived.is_file() or arrived.read_text() != "1":
+            raise AssertionError("selftest: a new file did not reach the other PC")
+    made_from = {"t": 100.0, "m": "laptop", "vv": {"laptop": 100.0}}
+    later = {"t": 50.0, "m": "desktop", "vv": {"laptop": 100.0, "desktop": 50.0}}  # made from it, on a slower clock
+    if not _newer(later, made_from) or _newer(made_from, later):
+        raise AssertionError("selftest: which version is newer")
+    if not skipped("Trend/live/.staging/x.json") or skipped("Trend/data/x.csv"):
+        raise AssertionError("selftest: what counts as data")
+    task = {"id": "sod", "cmd": ["python.exe", "C:/x/tools/daily_cycle.py"]}
+    if running_tasks([task], [Proc(1, None, "python tools/daily_cycle.py")]) != {"sod"}:
+        raise AssertionError("selftest: a running daily task")
 
 
 def _say(text: str) -> None:

@@ -86,7 +86,9 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
     for r in results:
         warnings += r.warnings
     warnings += retry_pending_uv(cfg, in_use, uv_cmd)
-    if updated := self_update(cfg):
+    hold = ("a daily task is running here" if running_ids else
+            "this PC's code is kept for today's daily run until 09:00" if frozen else None)
+    if updated := self_update(cfg, hold=hold):
         warnings.append(updated)
     repos_note = {r.repo: repo_note(r.state, r.repo in running_repos) for r in results if r.state}
     state = load_state(cfg)

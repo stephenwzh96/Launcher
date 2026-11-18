@@ -1,5 +1,8 @@
 """The installed tool (MachineSync\\tool) updates itself from the launcher repo's origin/main, never from whatever
-branch the launcher checkout is on, and only after the new copy passes its self-test (design, "Pieces")."""
+branch the launcher checkout is on, and only after the new copy passes its self-test (design, "Pieces"). Not while a
+daily task runs on this PC or this PC's code is kept for today's daily run (the caller says why: `hold`), nor while
+MachineSync\\hold_update.txt exists. The copy it replaced stays in MachineSync\\tool.old until the next update
+(rollback: README, "Machine sync")."""
 from __future__ import annotations
 
 import shutil
@@ -32,8 +35,12 @@ def _files(root: Path) -> dict[str, bytes]:
             if p.is_file() and "__pycache__" not in p.parts}
 
 
-def self_update(cfg: Settings, python: str | None = None) -> str | None:
-    """A message when the tool was updated or an update was refused; None when nothing changed."""
+HOLD_FILE = "hold_update.txt"
+
+
+def self_update(cfg: Settings, python: str | None = None, hold: str | None = None) -> str | None:
+    """A message when the tool was updated, or an update waits or was refused; None when nothing changed. `hold`:
+    why an update must wait this run (a daily task running here, today's code freeze)."""
     tool = cfg.sync_dir / "tool"
     launcher = cfg.repo_path("Marco/launcher")
     if not (tool / "machine_sync").exists() or not (launcher / ".git").exists():
@@ -50,6 +57,10 @@ def self_update(cfg: Settings, python: str | None = None) -> str | None:
         wanted[name] = data
     if _files(tool) == {k: v.replace(b"\r\n", b"\n") for k, v in wanted.items()}:
         return None
+    if (cfg.sync_dir / HOLD_FILE).exists():
+        return f"the launcher's main has a sync tool update: paused while MachineSync\\{HOLD_FILE} exists"
+    if hold:
+        return f"the launcher's main has a sync tool update: it waits ({hold})"
     staged = cfg.sync_dir / "tool.new"
     shutil.rmtree(staged, ignore_errors=True)
     for name, data in wanted.items():
@@ -69,5 +80,4 @@ def self_update(cfg: Settings, python: str | None = None) -> str | None:
         if not tool.exists() and old.exists():
             old.replace(tool)
         return f"could not install the sync tool update ({err}); next run tries again"
-    shutil.rmtree(old, ignore_errors=True)
-    return "sync tool updated from the launcher's main"
+    return "sync tool updated from the launcher's main (the copy it replaced is in MachineSync\\tool.old)"

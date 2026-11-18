@@ -83,7 +83,9 @@ paper cycle) must also never run twice for the same day.
   Replaces "TripSync - update desktop" and "TripSync - export data". "TripSync - Syncthing" stays.
 - Self-update: after fetching the launcher repo, if `origin/main`'s `machine_sync\` differs from the installed copy,
   the run copies it to a temporary folder, runs its `selftest`, and only then replaces `tool\`. The checked-out
-  launcher branch never matters to the tool.
+  launcher branch never matters to the tool. Since 18 Nov 2026: the self-test also runs a dry run of the core
+  decisions on two made-up PCs in a temporary folder; no update while a daily task runs on the PC or its code is
+  frozen for today's run, or while `MachineSync\hold_update.txt` exists; the replaced copy stays in `tool.old`.
 - Note format carries a version. A PC that reads a newer format than it knows stops importing and following, and
   says "update the sync tool on this PC".
 

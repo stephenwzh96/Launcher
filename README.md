@@ -150,7 +150,16 @@ $py = "C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe"
 ```
 
 - **Install on a PC** (from this folder): `& $py -m machine_sync install --machine desktop` (or `laptop`). The
-  installed copy updates itself from this repo's `origin/main` after passing a self-test.
+  installed copy updates itself from this repo's `origin/main` after passing a self-test (every module imports, and
+  a dry run on two made-up PCs in a temporary folder gives the right answers). It does not update while a daily task
+  runs on that PC, nor on the PC holding today's claim until 09:00 the next day (`run --update-frozen` lets it); the
+  status says an update waits.
+- **Roll back an update:** the copy it replaced stays in `C:\Users\User\MachineSync\tool.old` until the next update.
+  1. Create `C:\Users\User\MachineSync\hold_update.txt` (any content): no update is installed while it exists, so
+     the tool does not reinstall the bad `main` 5 minutes later.
+  2. Between two runs (the status's time; a run takes seconds), rename `MachineSync\tool` to `tool.bad` and
+     `tool.old` to `tool`. Check with `& $py -I C:\Users\User\MachineSync\tool\run_sync.py run`.
+  3. Once `main` is fixed, delete `hold_update.txt`: the next run installs it.
 
 ## Testing
 

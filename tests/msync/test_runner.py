@@ -220,6 +220,65 @@ class RunnerTest(TempDirCase):
         self.assertIn("failed its self-test", self_update(cfg))
         self.assertNotIn("not python", (cfg.sync_dir / "tool" / "machine_sync" / "status.py").read_text())
 
+    def _main_has_update(self, seed, cfg) -> None:
+        settings_py = seed / "machine_sync" / "settings.py"
+        settings_py.write_text(settings_py.read_text() + "\nUPDATED = True\n")
+        run(seed, "commit", "-am", "update")
+        run(seed, "push")
+        run(cfg.repo_path("Marco/launcher"), "fetch")
+
+    def test_self_update_waits_while_held(self) -> None:
+        from machine_sync.selfupdate import self_update
+
+        cfg, seed = self._launcher_pc()
+        self._main_has_update(seed, cfg)
+        self.assertIn("it waits (a daily task is running here)", self_update(cfg, hold="a daily task is running here"))
+        (cfg.sync_dir / "hold_update.txt").write_text("rolled back by hand\n")
+        self.assertIn("paused while MachineSync\\hold_update.txt exists", self_update(cfg))
+        self.assertNotIn("UPDATED", (cfg.sync_dir / "tool" / "machine_sync" / "settings.py").read_text())
+
+    def test_self_update_keeps_previous_copy_as_tool_old(self) -> None:
+        from machine_sync.selfupdate import self_update
+
+        cfg, seed = self._launcher_pc()
+        self._main_has_update(seed, cfg)
+        self.assertIn("tool.old", self_update(cfg))
+        self.assertIn("UPDATED", (cfg.sync_dir / "tool" / "machine_sync" / "settings.py").read_text())
+        self.assertNotIn("UPDATED", (cfg.sync_dir / "tool.old" / "machine_sync" / "settings.py").read_text())
+
+    def test_self_update_refuses_copy_whose_decisions_are_wrong(self) -> None:
+        from machine_sync.selfupdate import self_update
+
+        cfg, seed = self._launcher_pc()
+        data_sync = seed / "machine_sync" / "data_sync.py"
+        data_sync.write_text(data_sync.read_text().replace(  # every version older than the one it is compared with
+            "def _newer(p: dict, e: dict) -> bool:", "def _newer(p: dict, e: dict) -> bool:\n    return False\n\n\n"
+                                                     "def _was_newer(p: dict, e: dict) -> bool:"))
+        run(seed, "commit", "-am", "imports fine, decides wrong")
+        run(seed, "push")
+        run(cfg.repo_path("Marco/launcher"), "fetch")
+        self.assertIn("failed its self-test", self_update(cfg))
+
+    def test_runner_holds_self_update_while_daily_task_runs_or_code_is_kept(self) -> None:
+        from unittest import mock
+
+        from machine_sync import runner
+        from machine_sync.daily import record_claim
+        from machine_sync.procs import Proc
+
+        seen = []
+        tasks = self._sod_and_cycle(self.desk)
+        with mock.patch.object(runner, "self_update", lambda cfg, hold=None: seen.append(hold)):
+            sod = Proc(7, "python.exe", f"python.exe {self.desk.repo_path('Trend') / 'tools' / 'daily_cycle.py'}")
+            run_once(self.desk, now=datetime.now() + timedelta(minutes=5), procs=[sod], tasks=tasks)
+            now = datetime.now() + timedelta(minutes=5)
+            record_claim(self.desk.sync_dir, "daily", now.strftime("%Y-%m-%d"), "desktop",
+                         (now - timedelta(minutes=1)).isoformat(timespec="seconds"))
+            run_once(self.desk, now=now, procs=[], tasks=tasks)
+            run_once(self.desk, now=now, procs=[], tasks=tasks, update_frozen=True)
+        self.assertEqual(seen, ["a daily task is running here",
+                                "this PC's code is kept for today's daily run until 09:00", None])
+
     def test_task_xml_has_all_triggers(self) -> None:
         xml = task_xml(r"C:\Py\pythonw.exe", r"C:\Users\User\MachineSync\tool\run_sync.py", "PC\\User")
         for needle in ("PT5M", "<LogonTrigger>", "SessionUnlock", "Power-Troubleshooter", "IgnoreNew",
