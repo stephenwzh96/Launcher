@@ -10,7 +10,7 @@ from . import claims as day_claims
 from .code_sync import RepoResult, repo_note, retry_pending_uv, sync_code
 from .daily import (busy_repos, code_frozen, load_daily_tasks, read_claims, record_claim, running_tasks,
                     venvs_in_use)
-from .data_sync import ImportResult, load_state, read_alive, read_note, sync_data
+from .data_sync import ImportResult, clock_skew, load_state, read_alive, read_note, sync_data
 from .procs import Proc, processes
 from .selfupdate import self_update
 from .settings import Settings
@@ -97,6 +97,8 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
     except Exception as err:  # noqa: BLE001 - still write the status; the next run tries again
         res = ImportResult(skipped=[f"the data step failed: {type(err).__name__}: {err}"])
         warnings.append(f"the data step failed ({type(err).__name__}: {err}); next run tries again")
+    if skew := clock_skew(cfg, state, shown_note, read_alive(cfg, cfg.peer), now.timestamp()):
+        warnings.append(skew)
     text = render(cfg, now, results, res, state, shown_note, warnings, read_claims(cfg.sync_dir),
                   peer_seen=read_alive(cfg, cfg.peer))
     write_status(cfg, now, text)

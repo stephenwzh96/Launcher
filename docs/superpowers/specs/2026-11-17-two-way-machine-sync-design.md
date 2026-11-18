@@ -147,6 +147,11 @@ to them on the sending PC (export) and on the receiving PC (import), so neither 
 replaced, and whether it is deleted (a tombstone). The stamp of a change is when this PC first saw it; a path seen
 for the first time with no history takes the file's modified time (so the first run on both PCs keeps the newer
 copy, not whichever PC ran first). A path that reappears after a tombstone is a new change.
+Which version is newer (18 Nov 2026 review): each version carries a version vector (per PC, the stamp of that
+PC's latest change it includes, from that PC's own clock, never going backwards). A version that includes every
+change of the other wins; only versions changed on both PCs independently fall back to the later stamp. So a PC
+whose clock is ahead cannot undo a later change made from its own version. The status warns when the other PC's
+note, heartbeat or newest change is stamped more than 30 s in this PC's future.
 
 **Note:** each PC's note lists every data path with its version (tombstones kept 30 days).
 

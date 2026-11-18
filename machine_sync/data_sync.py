@@ -1,7 +1,9 @@
 """Two-way data (design, "Data step"): each PC records a version per data file (content hash, change stamp, the stamp
 it replaced, deleted or not), publishes all of them in its note, keeps in its outbox only the files the other PC
-lacks and that are newer here, and takes the other PC's newer versions. The newer change wins on both PCs; a file
-this PC had changed is backed up before it is replaced or deleted."""
+lacks and that are newer here, and takes the other PC's newer versions. Newer is decided by each version's history
+(its version vector), not by comparing the two PCs' clocks; only changes made on both PCs independently fall back
+to the later stamp. The same rule runs on both PCs; a file this PC had changed is backed up before it is replaced
+or deleted."""
 from __future__ import annotations
 
 import json
@@ -87,6 +89,33 @@ def read_alive(cfg: Settings, machine: str) -> float | None:
         return None
 
 
+SKEW_WARN_S = 30
+
+
+def clock_skew(cfg: Settings, state: dict, peer_note: dict | None, peer_alive: float | None,
+               now: float) -> str | None:
+    """A warning when the other PC's clock looks more than SKEW_WARN_S ahead of this one (or this one behind): its
+    last run (the note's `written`, its heartbeat) or the newest change of its this PC has seen is stamped in this
+    PC's future. Data decisions follow each file's history, so they stay right; the warning is for the rest (ties
+    between changes made on both PCs, and the code step's "PC last worked on", which compares the two clocks)."""
+    peer, newest = cfg.peer, float(peer_alive or 0.0)
+    if peer_note:
+        newest = max(newest, float(peer_note.get("written") or 0.0))
+        for raw in (peer_note.get("files") or {}).values():
+            try:
+                newest = max(newest, float(_version(raw)["vv"].get(peer, 0.0)))
+            except (IndexError, TypeError, ValueError, AttributeError):
+                continue
+    for e in state["files"].values():
+        newest = max(newest, float(e["vv"].get(peer, 0.0)))
+    ahead = newest - now
+    if ahead <= SKEW_WARN_S:
+        return None
+    size = f"{ahead:.0f} s" if ahead < 120 else f"{ahead / 60:.0f} min"
+    return (f"clock: the {peer}'s clock is about {size} ahead of this PC's (or this PC's is behind): set both to "
+            "internet time (Settings > Time > Sync now); the code step's \"PC last worked on\" compares the two clocks")
+
+
 def _same_note(a: dict | None, b: dict) -> bool:
     return a is not None and {k: v for k, v in a.items() if k != "written"} == {
         k: v for k, v in b.items() if k != "written"}
@@ -94,6 +123,32 @@ def _same_note(a: dict | None, b: dict) -> bool:
 
 def _key(v: dict) -> tuple[float, str]:
     return (v["t"], v["m"])
+
+
+def _includes(a: dict, b: dict) -> bool:
+    """Version vector a holds every change b holds. Each PC's entry is a stamp from that PC's own clock, so this never
+    compares the two clocks."""
+    return all(a.get(k, 0.0) >= v for k, v in b.items())
+
+
+def _newer(p: dict, e: dict) -> bool:
+    """Version p replaces version e. p was made from e (holds every change e holds, and more): p. e was made from p:
+    e. Neither (each has a change the other lacks: a clash), or the same vector: the later stamp wins, then the
+    machine name, the same answer on both PCs. Wall clocks only break such ties, so a PC whose clock is ahead cannot
+    undo a later change made from its own."""
+    p_has_e, e_has_p = _includes(p["vv"], e["vv"]), _includes(e["vv"], p["vv"])
+    if p_has_e != e_has_p:
+        return p_has_e
+    return _key(p) > _key(e)
+
+
+def _bump(vv: dict, machine: str, stamp: float) -> dict:
+    """vv with a new change made on `machine` at `stamp`. Never below a change of its own the vector already holds
+    (a clock set back, or a version taken from a PC whose clock is ahead), so the new version holds the old one."""
+    out = dict(vv)
+    before = out.get(machine)
+    out[machine] = stamp if before is None or stamp > before else before + 0.001
+    return out
 
 
 def _version(raw: list) -> dict:
@@ -167,8 +222,7 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
             e["size"], e["mt"] = st.st_size, st.st_mtime_ns
             continue
         stamp = min(st.st_mtime, now) if e is None else now  # first sight: its own time; any later change: now
-        vv = dict(e["vv"]) if e else {}
-        vv[cfg.machine] = stamp
+        vv = _bump(e["vv"] if e else {}, cfg.machine, stamp)
         entries[rel] = {"h": h, "t": stamp, "m": cfg.machine, "vv": vv, "del": False,
                         "size": st.st_size, "mt": st.st_mtime_ns}
     for rel, e in list(entries.items()):
@@ -189,9 +243,8 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
         if now - first < STABLE_S or first == now:
             continue
         missing.pop(rel)
-        vv = dict(e["vv"])
-        vv[cfg.machine] = now
-        entries[rel] = {"h": None, "t": now, "m": cfg.machine, "vv": vv, "del": True, "size": 0, "mt": 0}
+        entries[rel] = {"h": None, "t": now, "m": cfg.machine, "vv": _bump(e["vv"], cfg.machine, now), "del": True,
+                        "size": 0, "mt": 0}
     for rel in [r for r in missing if r not in entries or entries[r]["del"]]:
         missing.pop(rel)
     state["unstable"], state["errors"] = unstable, errors
@@ -294,7 +347,7 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
             if _key(p) > _key(e):
                 e.update(t=p["t"], m=p["m"])
             continue
-        if (e is None and p["del"]) or (e is not None and _key(e) >= _key(p)):
+        if (e is None and p["del"]) or (e is not None and not _newer(p, e)):
             continue
         candidates.append((rel, p, e))
     if held_by_syncthing:
@@ -399,7 +452,7 @@ def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
         raw = peer_files.get(rel)
         if raw is not None:
             p = _version(raw)
-            if (not p["del"] and p["h"] == e["h"]) or _key(p) > _key(e):
+            if (not p["del"] and p["h"] == e["h"]) or _newer(p, e):
                 continue
         src = cfg.home / rel
         if is_sqlite(src) and sqlite_open(src):

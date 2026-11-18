@@ -29,6 +29,15 @@ class RunnerTest(TempDirCase):
         syncthing(self.lap, self.desk)
         self.assertIn(f"laptop last ran {later:%d %b %H:%M}", self.run_pc(self.desk, now=later))
 
+    def test_status_warns_when_peer_clock_is_ahead(self) -> None:
+        now = datetime.now() + timedelta(minutes=5)
+        self.run_pc(self.desk, now=now)
+        syncthing(self.desk, self.lap)
+        self.run_pc(self.lap, now=now + timedelta(minutes=10))  # the laptop's clock is 10 minutes ahead
+        syncthing(self.lap, self.desk)
+        self.assertIn("laptop's clock is about 10 min ahead", self.run_pc(self.desk, now=now + timedelta(seconds=5)))
+        self.assertNotIn("clock is about", self.run_pc(self.lap, now=now + timedelta(minutes=10, seconds=5)))
+
     def test_two_pc_round_trip(self) -> None:
         import time
         time.sleep(1.1)
