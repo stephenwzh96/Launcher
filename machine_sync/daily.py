@@ -28,8 +28,11 @@ tasks = load_tasks(here / "tasks.yaml")
 def progress(t):
     f = t.resolved_progress_file() if hasattr(t, "resolved_progress_file") else None
     return str(f) if f else None
+def preview(t):
+    return t.resolved_preview_cmd() if getattr(t, "preview_cmd", None) else None
 print(json.dumps([{"id": t.id, "claim": getattr(t, "claim", None), "cwd": str(t.resolved_cwd()),
-                   "cmd": t.resolved_cmd(), "progress_file": progress(t)} for t in tasks]))
+                   "cmd": t.resolved_cmd(), "progress_file": progress(t), "preview_cmd": preview(t)}
+                  for t in tasks]))
 """
 
 
@@ -147,19 +150,32 @@ def _progress_running(path: str | None, pids: set[int], created=_created) -> boo
         return False
 
 
+PREVIEW_FLAGS = ("--plan",)  # Trend's `daily_cycle.py --plan`: the launcher's few-second, read-only preview
+
+
+def _preview_flags(task: dict) -> set[str]:
+    """Arguments that make a process the task's preview (tasks.yaml `preview_cmd`) rather than the task: those the
+    preview adds to the task's own command, plus PREVIEW_FLAGS for a tasks.json dumped before `preview_cmd` was."""
+    cmd = {_norm(a) for a in task["cmd"][1:]}
+    extra = {_norm(a) for a in (task.get("preview_cmd") or [])[1:]} - cmd
+    return extra | {_norm(f) for f in PREVIEW_FLAGS}
+
+
 def running_tasks(tasks: list[dict], procs: list[Proc]) -> set[str]:
     """Daily tasks running on this PC, started by the launcher or from a terminal: a process whose command line holds
     all of the task's arguments, or runs its script (by file name) or module and subcommand (`-m src.operations
-    run`) from any folder; or the task's progress file says running and names a live process."""
-    lines = [_norm(p.cmdline) for p in procs if p.cmdline]
-    tokens = [_tokens(p.cmdline) for p in procs if p.cmdline]
+    run`) from any folder; or the task's progress file says running and names a live process. The task's preview
+    (`daily_cycle.py --plan`, seconds long and read-only) is not the task: it never holds the sync."""
+    listed = [(_norm(p.cmdline), _tokens(p.cmdline)) for p in procs if p.cmdline]
     pids = {p.pid for p in procs}
     running = set()
     for task in tasks:
+        flags = _preview_flags(task)
+        own = [(line, toks) for line, toks in listed if not flags & set(toks)]
         args = [_norm(a) for a in task["cmd"][1:]]
         sig = _signature(task["cmd"])
-        by_args = bool(args) and any(all(a in line for a in args) for line in lines)
-        by_name = sig is not None and any(_matches(sig, t) for t in tokens)
+        by_args = bool(args) and any(all(a in line for a in args) for line, _ in own)
+        by_name = sig is not None and any(_matches(sig, toks) for _, toks in own)
         if by_args or by_name or _progress_running(task.get("progress_file"), pids):
             running.add(task["id"])
     return running

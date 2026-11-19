@@ -36,6 +36,21 @@ class DailyTest(TempDirCase):
         self.assertEqual(running_tasks([self.ibkr, self.sod], [cycle, status]), {"ibkr-paper-cycle"})
         self.assertEqual(running_tasks([self.ibkr, self.sod], [status]), set())
 
+    def test_the_preview_is_not_the_task(self) -> None:
+        # the launcher's preview (tasks.yaml preview_cmd: daily_cycle.py --plan) runs a few seconds whenever the page
+        # asks; seen live on the laptop, 19 Nov 2026, as a venv shim and the real interpreter
+        h = str(self.tmp)
+        shim = Proc(30, None, f"{h}\\Trend\\AIJPMT1A_build\\.venv\\Scripts\\python.exe "
+                              f"{h}\\Trend\\AIJPMT1A_build\\tools\\daily_cycle.py --plan")
+        real = Proc(31, None, f'"C:\\Users\\User\\AppData\\Local\\Programs\\Python\\Python312\\python.exe" '
+                              f"{h}\\Trend\\AIJPMT1A_build\\tools\\daily_cycle.py --plan")
+        sod = dict(self.sod, preview_cmd=self.sod["cmd"] + ["--plan"])
+        self.assertEqual(running_tasks([sod, self.ibkr], [shim, real]), set())
+        self.assertEqual(running_tasks([self.sod], [shim, real]), set())  # a dump from before preview_cmd was listed
+        run = Proc(32, None, f"{h}\\Trend\\AIJPMT1A_build\\.venv\\Scripts\\python.exe "
+                             f"{h}\\Trend\\AIJPMT1A_build\\tools\\daily_cycle.py")
+        self.assertEqual(running_tasks([sod], [shim, run]), {"aijpmt1a-refresh"})  # the real run beside a preview
+
     def test_code_frozen_until_nine_next_day(self) -> None:
         record_claim(self.cfg.sync_dir, "daily", "2026-11-17", "desktop", "2026-11-17T09:41:00")
         self.assertFalse(code_frozen(self.cfg, datetime(2026, 11, 17, 9, 0)))
