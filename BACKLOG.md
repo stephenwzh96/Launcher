@@ -23,7 +23,7 @@ the pin, and a press without GitHub. What is left of them:
 |---|---|---|---|
 | 1.3 | Drill "Flatten" on paper once [D47, GL 11] | both | the drill dated in the runbook |
 | 1.9 | Register the resume task (`scripts/resume_if_needed.py`; the `schtasks` line is in the IBKR runbook) [D56] | Stephen registers | the task runs every 10 min, 16:00-08:30 |
-| 1.10 | The night on the VPS with an outside dead-man [D56, GL 15] | both | 5 paper nights run there, watched from outside |
+| 1.10 | The VPS runs the daily run: Start of Day and the night, with an outside dead-man; the desktop or laptop only when Stephen starts a day there by hand (VPS Claude's design) [D56, D65, GL 15] | both | D65's readiness list done (memory, Norgate, Trend checkout and sync, a timed trial Start of Day), then 5 paper days run there, watched from outside |
 | 1.12 | Review the regenerated drawdown levels (`reference/drawdown_levels.yaml`, from the 18 Nov runs) [D59] | Stephen | reviewed, or changed in a reviewed commit |
 | 1.14 | Adopt T20b (the 3-day covariance) for MTFB and MTFC, or not: it changes all three design hashes [D58] | Stephen | a line in Trend `DECISIONS.md` |
 | 2.4 | Turn on the day side's phone lines: Start of Day's Telegram (two user variables, then `notify_telegram: true`); redeploy the VPS watch, which now knows a run that ended [trade operations 4, 5] | Stephen | each line seen on the phone once |
