@@ -125,6 +125,51 @@ class ClaimGuardTest(unittest.TestCase):
         self.assertEqual(r.reminders({}, now=wednesday_noon), [])
 
 
+class GitHubUnreachableTest(unittest.TestCase):
+    """GitHub is not a hard dependency of a press (team review, 20 Nov 2026, trade operations 9, architect 3): with
+    IBKR's run lock in the book's database, the day's recorded holder starts with a warning, and any other PC is
+    offered to start without the claim."""
+    DOWN = ClaimResult(False, None, None, "Could not resolve host: github.com")
+    setUp, tearDown, runner = ClaimGuardTest.setUp, ClaimGuardTest.tearDown, ClaimGuardTest.runner
+
+    def record(self, day: str, holder: str) -> None:
+        (self.sync_dir / "daily_claim.json").write_text(json.dumps({"claims": [
+            {"claim": "daily", "day": day, "holder": holder, "at": f"{day}T15:10:00"}]}))
+
+    def test_the_days_recorded_holder_starts_with_a_warning(self) -> None:
+        r = self.runner(FakeClaimer(self.DOWN))
+        self.record(r._day(r.tasks["sod"]), "desktop")
+        self.assertIsNone(r.start("sod"))
+        self.assertEqual(r.runs["sod"]["state"], "running")
+        warned = " ".join(r.runs["sod"]["warnings"])
+        self.assertIn("GitHub could not be reached (Could not resolve host: github.com)", warned)
+        self.assertIn("IBKR's run lock still refuses a second run", warned)
+
+    def test_any_other_pc_is_offered_to_start_without_the_claim(self) -> None:
+        r = self.runner(FakeClaimer(self.DOWN))
+        day = r._day(r.tasks["sod"])
+        self.record(day, "laptop")  # the other PC held it when last seen: not this PC's to assume
+        err = r.start("sod")
+        self.assertIn("could not check GitHub", err)
+        self.assertIn("Start without the claim only if the laptop is off", err)
+        self.assertEqual(r.offers["sod"], "start_without_claim")
+        self.assertNotIn("sod", r.runs)
+
+    def test_starting_without_the_claim_records_this_pc_and_warns(self) -> None:
+        r = self.runner(FakeClaimer(self.DOWN))
+        self.assertIsNotNone(r.start("sod"))  # no record at all: refused with the offer
+        self.assertIsNone(r.start("sod", without_claim=True))
+        self.assertIn("Started without the day's claim", " ".join(r.runs["sod"]["warnings"]))
+        claims = json.loads((self.sync_dir / "daily_claim.json").read_text())["claims"]
+        self.assertEqual((claims[0]["day"], claims[0]["holder"]), (r._day(r.tasks["sod"]), "desktop"))
+
+    def test_a_holder_on_github_is_still_refused_whatever_the_record(self) -> None:
+        r = self.runner(FakeClaimer(ClaimResult(False, "laptop", "2026-11-20T15:10:00")))
+        self.record(r._day(r.tasks["sod"]), "desktop")
+        self.assertIn("already started on laptop", r.start("sod", without_claim=True))
+        self.assertNotIn("sod", r.runs)
+
+
 class ClaimDayTest(unittest.TestCase):
     """The day a daily task claims is the day of the run the press belongs to: the IBKR paper cycle's second press
     or a restart after midnight Sydney stays on the day its cycle began (tasks.yaml `claim_day`), instead of taking

@@ -8,6 +8,12 @@ progress.py) adds the time since its last output, its ETA, and whether it has st
 Stop asks first: each task runs in its own process group, which Stop sends CTRL_BREAK_EVENT, so a task can record
 why it ended (Trend's Start of Day records "stopped" and a FAILED day). Only if it has not ended STOP_GRACE_S
 later is it ended by force (taskkill /T /F).
+
+GitHub is no longer a hard dependency of a press (team review, 20 Nov 2026, trade operations 9, architect 3): IBKR's
+run lock now refuses a second run of a book in the book's own database, whoever starts it. When GitHub cannot be
+asked for the day's claim, a PC that is the day's recorded holder (MachineSync\\daily_claim.json) starts anyway with
+a warning on the page; any other PC is refused with an offer to start without the claim, which the page asks about
+with a plain warning, and which then records this PC as the day's holder.
 """
 import json
 import os
@@ -109,6 +115,8 @@ class TaskRunner:
         # task id -> what the page may offer after a refused start: "take_over" (another PC holds the day),
         # "start_anyway" (this PC is not in step: allow_unsynced=True), "take_over_anyway" (the other PC may still
         # be running: force_take_over=True)
+        # "start_without_claim": GitHub could not be asked and this PC is not the day's recorded holder
+        # (without_claim=True)
         self.offers: dict[str, str] = {}
         self.warnings: dict[str, list[str]] = {}  # task id -> what the last start went ahead despite (the page shows)
         self.run_all_refusal: dict | None = None  # the start that stopped the last Run all, for the page to show
@@ -220,8 +228,10 @@ class TaskRunner:
             return f"{task.label}: could not check this ({type(err).__name__}: {err})."
 
     def _check_claim(self, task: TaskConfig, take_over: bool, machine: str,
-                     record: list[str] | None = None) -> str | None:
-        """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not."""
+                     record: list[str] | None = None, without_claim: bool = False) -> str | None:
+        """None when this PC holds today's claim for the task (claiming it now if nobody does), else why not. GitHub
+        unreachable: None when this PC is the day's recorded holder, or when the person chose to start without the
+        claim (both with a warning for the page); else refused with that offer."""
         day = self._day(task)
         res = self.claimer(task, day, machine, take_over, record=record)
         if res.ok:
@@ -234,7 +244,33 @@ class TaskRunner:
             when = f" at {res.at[11:16]}" if res.at and len(res.at) >= 16 else ""
             return (f"{task.label} for {day} was already started on {res.holder}{when}. "
                     "Use Take over only if that run has ended or that PC is off.")
-        return f"{task.label}: could not check GitHub for today's run ({res.error}); not started."
+        at = datetime.now().isoformat(timespec="seconds")
+        if self._recorded_holder(task, day, machine):
+            self._warn(task.id, f"GitHub could not be reached ({res.error}), so the day's claim was not checked "
+                                f"there: started on this PC's own record that it holds {day} "
+                                "(MachineSync\\daily_claim.json). IBKR's run lock still refuses a second run of the book.")
+            return None
+        if without_claim:
+            record_claim(self.sync_dir, task.claim, day, machine, at)  # this PC's run of the day, as far as it knows
+            self._warn(task.id, f"Started without the day's claim: GitHub could not be reached ({res.error}). "
+                                f"Check that the {self._peer(machine)} is not running {day}'s daily tasks.")
+            return None
+        self.offers[task.id] = "start_without_claim"
+        return (f"{task.label}: could not check GitHub for {day}'s claim ({res.error}), and this PC has no record "
+                f"of holding it; not started. Start without the claim only if the {self._peer(machine)} is off or "
+                f"is not running {day}'s daily tasks: IBKR's run lock refuses a second run of the book on its "
+                "database, but nothing stops a second Start of Day on the other PC.")
+
+    def _recorded_holder(self, task: TaskConfig, day: str, machine: str) -> bool:
+        return any(c["claim"] == task.claim and c["day"] == day and c["holder"] == machine
+                   for c in read_claims(self.sync_dir))
+
+    def _warn(self, task_id: str, text: str) -> None:
+        self.warnings.setdefault(task_id, []).append(text)
+
+    @staticmethod
+    def _peer(machine: str) -> str:
+        return {"desktop": "laptop", "laptop": "desktop"}.get(machine, "other PC")
 
     def _held_elsewhere(self, task: TaskConfig, now: datetime) -> bool:
         day, machine = self._day(task, now), self._machine()
@@ -243,11 +279,12 @@ class TaskRunner:
 
     # ----- actions -----
     def start(self, task_id: str, take_over: bool = False, allow_unsynced: bool = False,
-              force_take_over: bool = False) -> str | None:
+              force_take_over: bool = False, without_claim: bool = False) -> str | None:
         """Starts the task unless it is already running, or (a task with `claim`) another PC holds today's claim, or
         this PC is not in step (a repo the task uses is off its default branch, has edited tracked files, commits
         not on GitHub or is split from it: allow_unsynced starts it anyway). A take-over is refused while the other
-        PC's sync says it is on or running a daily task (force_take_over, a second confirmation, overrides it). A
+        PC's sync says it is on or running a daily task (force_take_over, a second confirmation, overrides it). GitHub
+        unreachable: the day's recorded holder starts with a warning; another PC needs without_claim. A
         daily task starts only between sync runs (MachineSync\\run.lock, held while claiming and starting), so the
         next sync run already sees it running. The claim goes to GitHub outside self.lock: the page's status stays
         live meanwhile. Returns an error message on failure, else None; self.offers says what the page may offer
@@ -293,10 +330,10 @@ class TaskRunner:
                     record = startcheck.code_record(cfg, self._task_repos(cfg, task))
                 except Exception as err:  # noqa: BLE001 - the record is for later reading: never stops a start
                     record = [f"heads unavailable ({type(err).__name__}: {err})"]
-                if refused := self._check_claim(task, take_over, machine, record):
+                if refused := self._check_claim(task, take_over, machine, record, without_claim):
                     return refused
-                with self.lock:
-                    failed = self._spawn(task_id, task, warnings)
+                with self.lock:  # the claim may have added a warning (GitHub unreachable)
+                    failed = self._spawn(task_id, task, self.warnings.get(task_id))
             finally:
                 sync_lock.release(self.sync_dir)
             if failed is None:  # housekeeping on GitHub: never on the start's path, never under run.lock
@@ -437,8 +474,8 @@ class TaskRunner:
         return "\n".join(_tail(self.log_dir / run["log"]).splitlines()[-lines:])
 
     def reminders(self, previews: dict[str, str], now: datetime | None = None) -> list[dict]:
-        """Start of Day reminders due now (reminder.py), for tasks with `remind`; `previews`: each task's preview
-        line, for its latest start."""
+        """The reminders due now (reminder.py), for tasks with `remind`: Start of Day's, and the IBKR cycle's presses;
+        `previews`: each task's preview line, for its latest start."""
         now = now or datetime.now(UTC)
         out = []
         with self.lock:
@@ -448,7 +485,7 @@ class TaskRunner:
                 self._settle(task_id)
                 running = self.runs.get(task_id, {}).get("state") == "running"
                 prog = progress.read(task.resolved_progress_file())
-                if due := reminder.due(task, now, running, prog, previews.get(task_id, "")):
+                if due := reminder.due(task, now, running, prog, previews.get(task_id, ""), day=self._day(task, now)):
                     out.append(due)
         return out
 
