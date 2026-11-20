@@ -1,0 +1,15 @@
+# Line endings (team review, 20 Nov 2026, developer 9): LF in the repository for text, CRLF for Windows scripts,
+# binaries left alone. Not renormalized on the review's branches: one renormalize commit follows once they are merged.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.parquet binary
+*.xlsx binary
+*.dump binary
+*.woff binary
+*.woff2 binary
+*.zip binary
