@@ -53,6 +53,7 @@ the pin, and a press without GitHub. What is left of them:
 | 3.14 | Equity index rolls 1-2 days apart in Trend and IBKR [Trend `reports/paper_readiness_2026-11-16.md`] | aligned, or the gap accepted |
 | 3.15 | The twelve empty legacy folders under IBKR `src/` and the five stale documents: archive or delete (your no-delete rule) [review next batch 9] | your say recorded; the documents carry superseded banners meanwhile |
 | 3.16 | A Bank of Korea key for KRW_MP2Y; `data import-french` for TZ_TPX after the library's next update [T-TODO; Trend independent review 17 Nov] | key in `.env`; import done |
+| 3.17 | On "no envelope" or "envelope rejected", a maintenance list (the rolls and the closes due, from the last traded envelope, always waiting for a person) instead of a halt [risk manager 5; IBKR gates builder] | your yes or no; on a yes Claude builds it (about a day, with tests) |
 
 ## 4. Model research (Trend; each a pre-registered trial, adopted only by Stephen)
 
