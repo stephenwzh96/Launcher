@@ -540,12 +540,14 @@ function renderReminder(list) {
   const show = Boolean(reminder) && key !== dismissed;
   const box = $("#remind");
   box.hidden = !show;
-  document.title = show ? "Start of Day not started · Launcher" : "Launcher";
+  document.title = show ? `${reminder.tab || "Start of Day not started"} · Launcher` : "Launcher";
   if (!show) return;
   box.classList.toggle("again", reminder.again);
   if ($("#remind-text").textContent !== reminder.text) $("#remind-text").textContent = reminder.text;
-  const note = `Reminder of ${reminder.slot}: no record for ${reminder.t} yet, and no run going.`;
+  // the IBKR cycle's reminder says itself what is due (its first press, or the approval: no Start before that)
+  const note = reminder.note || `Reminder of ${reminder.slot}: no record for ${reminder.t} yet, and no run going.`;
   if ($("#remind-note").textContent !== note) $("#remind-note").textContent = note;
+  $("#remind-start").hidden = reminder.start === false;
   $("#remind-start").textContent = t ? `Start ${t.label}` : "Start now";
   $("#remind-start").disabled = false;
 }
@@ -577,6 +579,7 @@ async function startTask(id, opts = {}) {
   if (opts.takeOver) query.set("take_over", "true");
   if (opts.allowUnsynced) query.set("allow_unsynced", "true");
   if (opts.forceTakeOver) query.set("force_take_over", "true");
+  if (opts.withoutClaim) query.set("without_claim", "true");
   const qs = query.toString();
   const url = `/api/tasks/${id}/start${qs ? "?" + qs : ""}`;
   const data = await (await fetch(url, { method: "POST" })).json();
@@ -599,6 +602,11 @@ function answerRefusal(id, data, opts = {}, prefix = "") {
     const ask = `${said}\n\nHave you checked that the other PC's run has ended? Take over anyway and start `
       + `${t.label} here?`;
     if (confirm(ask)) return startTask(id, { ...opts, forceTakeOver: true });
+  } else if (data.offer === "start_without_claim" && !opts.withoutClaim) {
+    // GitHub could not be asked for the day's claim, and this PC has no record of holding it
+    const ask = `${said}\n\nStart ${t.label} WITHOUT the day's claim? Only if the other PC is off or is not running `
+      + "today's daily tasks. IBKR's run lock refuses a second run of the book; nothing stops a second Start of Day.";
+    if (confirm(ask)) return startTask(id, { ...opts, withoutClaim: true });
   } else if (data.offer === "start_anyway" && !opts.allowUnsynced) {
     // this PC is not in step with GitHub or the other PC: the run would not use the code and data on main
     if (confirm(`${said}\n\nStart ${t.label} anyway?`)) return startTask(id, { ...opts, allowUnsynced: true });

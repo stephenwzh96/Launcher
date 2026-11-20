@@ -110,13 +110,16 @@ def run_all_tasks():
 
 
 @app.post("/api/tasks/{task_id}/start")
-def start_task(task_id: str, take_over: bool = False, allow_unsynced: bool = False, force_take_over: bool = False):
+def start_task(task_id: str, take_over: bool = False, allow_unsynced: bool = False, force_take_over: bool = False,
+               without_claim: bool = False):
     """Starts a task. A refused daily task (tasks.yaml `claim`) says what the page may offer next (`offer`):
     "take_over" when another PC already started today (`claimed_by`; then take_over=true), "start_anyway" when this
     PC is not in step (then allow_unsynced=true), "take_over_anyway" when the other PC may still be running (then
-    force_take_over=true as well). `warnings`: what the start went ahead despite (edited tracked files)."""
+    force_take_over=true as well), "start_without_claim" when GitHub could not be asked and this PC has no record of
+    holding the day (then without_claim=true). `warnings`: what the start went ahead despite (edited tracked files,
+    a claim not checked on GitHub)."""
     err = RUNNER.start(_get_task(task_id), take_over=take_over, allow_unsynced=allow_unsynced,
-                       force_take_over=force_take_over)
+                       force_take_over=force_take_over, without_claim=without_claim)
     return {"ok": err is None, "errors": [err] if err else [],
             "claimed_by": RUNNER.refusals.get(task_id) if err else None,
             "offer": RUNNER.offers.get(task_id) if err else None,

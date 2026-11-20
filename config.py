@@ -5,7 +5,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 MARCO_DIR = Path(__file__).resolve().parent.parent
 
@@ -51,11 +51,22 @@ def claim_day_rule(rule: str) -> tuple[time, ZoneInfo]:
 
 class RemindConfig(BaseModel):
     """A banner on weekdays when a task has not been started by these times (tasks.yaml `remind`). Only a banner
-    while the launcher is open: the task itself is still started by hand (Trend DECISIONS 2026-10-27)."""
+    while the launcher is open: the task itself is still started by hand (Trend DECISIONS 2026-10-27).
+
+    Two kinds. With `record` (Start of Day): no banner once a run for the day has left its record. With
+    `heartbeat` (the IBKR cycle, team review 20 Nov 2026): the cycle's two presses, read from IBKR's heartbeat file:
+    its first press not done, or its list waiting for approval and the second press (reminder.cycle_due)."""
     at: list[str]  # "HH:MM" in the task's timezone: the banner shows from the first; Dismiss hides it until the next
     # the file a run for decision date t leaves (relative to Marco/), with {t} for t as YYYY-MM-DD; t is the weekday
     # before today in the task's timezone (Monday's is Friday). No banner once it exists.
-    record: str
+    record: str | None = None
+    # IBKR's heartbeat file (relative to Marco/; IBKR_HEARTBEAT_FILE there): its last beat names the cycle and how its
+    # run ended. The cycle is the task's claim day (its trade day) and `mode`.
+    heartbeat: str | None = None
+    mode: str = "paper"
+    # with `heartbeat`: Start of Day's record for the trade day's decision date t ({t}); no banner until its verdict
+    # is GO (before that Start of Day's own reminder stands; on a HOLD there is nothing to press)
+    go: str | None = None
 
     @field_validator("at")
     @classmethod
@@ -63,6 +74,12 @@ class RemindConfig(BaseModel):
         for text in at:
             time.fromisoformat(text)  # ValueError: not HH:MM
         return at
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> "RemindConfig":
+        if (self.record is None) == (self.heartbeat is None):
+            raise ValueError("remind needs one of record (a run's file) or heartbeat (the IBKR cycle's)")
+        return self
 
 
 class TaskConfig(BaseModel):
@@ -115,7 +132,15 @@ class TaskConfig(BaseModel):
 
     def resolved_record(self, t: str) -> Path | None:
         """The record a run for decision date t (YYYY-MM-DD) leaves, from `remind`."""
-        return (MARCO_DIR / self.remind.record.format(t=t)).resolve() if self.remind else None
+        return (MARCO_DIR / self.remind.record.format(t=t)).resolve() if self.remind and self.remind.record else None
+
+    def resolved_heartbeat(self) -> Path | None:
+        """IBKR's heartbeat file, from `remind`."""
+        return (MARCO_DIR / self.remind.heartbeat).resolve() if self.remind and self.remind.heartbeat else None
+
+    def resolved_go(self, t: str) -> Path | None:
+        """Start of Day's record for decision date t, whose verdict gates the cycle's reminder, from `remind`."""
+        return (MARCO_DIR / self.remind.go.format(t=t)).resolve() if self.remind and self.remind.go else None
 
 
 def load_apps(path: Path) -> list[AppConfig]:
