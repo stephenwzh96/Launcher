@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    # The launcher's tests (team review, 20 Nov 2026, developer 3: the launcher had no CI). On Windows, as the launcher
+    # is (process groups, CTRL_BREAK_EVENT, CREATE_NO_WINDOW), installed from the lock. The tests work in temporary
+    # folders with local git repositories and stand-in claimers: nothing needs GitHub claims, MachineSync, Syncthing,
+    # Trend or IBKR (the one test comparing the trade-day table with IBKR's skips without IBKR beside it).
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (pinned)
+        run: python -m pip install -r requirements.lock.txt
+      - name: Tests
+        env:
+          PYTHONUTF8: "1"
+        run: python -m unittest discover tests
