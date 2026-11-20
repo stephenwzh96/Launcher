@@ -5,98 +5,105 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Launcher</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%231E6E52' stroke-width='3'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='none' stroke='%230b0b0b' stroke-width='3'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
 <style>
-  /* A desk timetable: the day's run as steps on a rail (hollow = to do, filled green = done today, a pulsing ring
-     while running, a brick ring when stalled, brick = failed), then the dashboards by group. Without the web fonts
-     it falls back to Segoe UI. */
+  /* The desk family's tokens (Trend's dashboard/DESIGN.md, IBKR's dashboard/DESIGN.md): greyscale chrome, hue only
+     for status, IBM Plex Sans Condensed with tabular figures. The page is one pane on the plane with a 3px ink rule
+     on top, like Trend's opening checks. The day's run is a timetable on a rail: hollow = to do, filled = done today
+     (the good colour), a pulsing ring while running, a critical ring when stalled, filled critical = failed. Status
+     colour marks; it never carries text (the warning yellow is unreadable as text), so a warning line is ink with a
+     marked icon. Without the web font it falls back to Arial Narrow. */
   :root {
-    --paper: #EDF0EE;
-    --surface: #F8FAF9;
-    --ink: #17211F;
-    --muted: #5E6B68;
-    --rule: #CDD5D2;
-    --rule-strong: #A9B5B1;
-    --green: #1E6E52;
-    --green-hover: #185C44;
-    --on-green: #FFFFFF;
-    --amber: #94600F;
-    --amber-halo: rgba(148, 96, 15, .35);
-    --brick: #A23E2B;
-    --brick-halo: rgba(162, 62, 43, .35);
-    --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-    --cond: "IBM Plex Sans Condensed", "Segoe UI", system-ui, sans-serif;
+    --pane: #fcfcfb;
+    --plane: #dcdbd5;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --rule: #e1e0d9;
+    --rule-strong: #c3c2b7;
+    --hover: rgba(11, 11, 11, .05);
+    --good: #0ca30c;
+    --warning: #fab219;
+    --warning-halo: rgba(250, 178, 25, .4);
+    --critical: #d03b3b;
+    --critical-halo: rgba(208, 59, 59, .35);
+    --focus: #2a78d6;
+    --cond: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --icon-warn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.5 15 14H1z' fill='%23fab219'/%3E%3Cpath d='M8 6v4M8 11.6v.4' stroke='%230b0b0b' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+    --icon-fail: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23d03b3b'/%3E%3Cpath d='m5.5 5.5 5 5m0-5-5 5' stroke='%23fff' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+    color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --paper: #121816;
-      --surface: #18201E;
-      --ink: #E3E9E6;
-      --muted: #8C9A96;
-      --rule: #2A3532;
-      --rule-strong: #3D4A46;
-      --green: #5DBB95;
-      --green-hover: #74C9A5;
-      --on-green: #0E1A15;
-      --amber: #E0A74A;
-      --amber-halo: rgba(224, 167, 74, .35);
-      --brick: #E07A62;
-      --brick-halo: rgba(224, 122, 98, .35);
+      --pane: #1a1a19;
+      --plane: #0d0d0d;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --muted: #898781;
+      --rule: #2c2c2a;
+      --rule-strong: #383835;
+      --hover: rgba(255, 255, 255, .05);
+      --focus: #3987e5;
+      color-scheme: dark;
     }
   }
 
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html { -webkit-text-size-adjust: 100%; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font: 400 14px/1.45 var(--sans); }
+  body { margin: 0; background: var(--plane); color: var(--ink); font: 400 12px/1.45 var(--cond); -webkit-font-smoothing: antialiased; }
   h1, h2, h3, p { margin: 0; }
-  :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; border-radius: 2px; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
 
-  .page { max-width: 54rem; margin: 0 auto; padding: 2rem 2rem 3rem; }
+  .page { max-width: 56rem; margin: 24px auto 32px; padding: 0 16px 16px; background: var(--pane); border-top: 3px solid var(--ink); }
   .top {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
-    padding-bottom: .875rem; border-bottom: 1px solid var(--rule-strong);
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    min-height: 36px; margin: 0 -16px; padding: 0 16px; border-bottom: 1px solid var(--rule);
   }
-  h1 { font: 600 22px/1.2 var(--cond); letter-spacing: -.005em; }
-  .now, .count { font: 500 14px/1.2 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
+  h1 { font: 600 14px/1.2 var(--cond); }
+  .now, .count { font: 400 11px/1.2 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
 
-  /* The Start of Day reminder (tasks.yaml remind): amber from the first time, brick from the next. */
+  /* The reminders (tasks.yaml remind): a banner with a status edge, warning from the first time, critical after. */
   .remind {
-    display: flex; align-items: center; gap: .5rem 1rem; flex-wrap: wrap; margin-top: 1.25rem;
-    padding: .75rem .875rem .75rem 1rem; background: var(--surface);
-    border: 1px solid var(--rule); border-left: 4px solid var(--amber); border-radius: 4px;
+    display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; margin: 8px 0 0;
+    padding: 6px 8px 6px 12px; box-shadow: inset 3px 0 0 var(--warning); background: var(--hover);
   }
-  .remind.again { border-left-color: var(--brick); }
-  .remind-text { flex: 1 1 20rem; font: 600 16px/1.35 var(--cond); }
-  .remind-note { display: block; font: 400 13px/1.4 var(--sans); color: var(--muted); }
-  .remind-actions { display: flex; align-items: center; gap: .25rem; }
+  .remind.again { box-shadow: inset 3px 0 0 var(--critical); }
+  .remind-text { flex: 1 1 20rem; font: 600 13px/1.35 var(--cond); }
+  .remind-note { display: block; font: 400 11px/1.4 var(--cond); color: var(--ink-2); }
+  .remind-actions { display: flex; align-items: center; gap: 4px; }
 
-  section { padding-top: 1.25rem; }
-  section + section { margin-top: 1.5rem; border-top: 1px solid var(--rule); }
-  .section-head { display: flex; align-items: center; gap: .75rem; min-height: 32px; margin-bottom: 1rem; }
+  section { padding-top: 0; }
+  section + section { margin-top: 12px; }
+  /* every section opens with the family's title bar: title, a muted count, the action on the right */
+  .section-head {
+    display: flex; align-items: center; gap: 10px; min-height: 30px; margin: 0 -16px 10px; padding: 0 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section + section .section-head { border-top: 1px solid var(--rule); }
   .section-head .btn { margin-left: auto; }
-  h2 { font: 600 16px/1.2 var(--cond); }
+  h2 { font: 600 12px/1.2 var(--cond); }
 
-  /* Buttons: one filled action per step; outlined for the rest; Stop, Log and Details as text. */
+  /* Buttons: one filled (ink) action per step; outlined for the rest; Stop, Log and Details as text. */
   .btn {
-    display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px;
-    font: 500 14px/1 var(--sans); white-space: nowrap; text-decoration: none; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; height: 24px; padding: 0 10px;
+    font: 500 12px/1 var(--cond); white-space: nowrap; text-decoration: none; cursor: pointer;
     border: 1px solid transparent; border-radius: 4px; background: none; color: var(--ink);
   }
   .btn:disabled { opacity: .4; cursor: default; }
-  .btn.primary { background: var(--green); color: var(--on-green); }
-  .btn.primary:not(:disabled):hover { background: var(--green-hover); }
-  .btn.secondary { background: var(--surface); border-color: var(--rule-strong); }
-  .btn.secondary:not(:disabled):hover { border-color: var(--muted); }
-  .btn.link { padding: 0 8px; color: var(--muted); }
+  .btn.primary { background: var(--ink); color: var(--pane); border-color: var(--ink); font-weight: 600; }
+  .btn.primary:not(:disabled):hover { opacity: .85; }
+  .btn.secondary { background: var(--pane); border-color: var(--rule-strong); }
+  .btn.secondary:not(:disabled):hover { background: var(--hover); }
+  .btn.link { padding: 0 6px; color: var(--ink-2); }
   .btn.link:not(:disabled):hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
-  .btn.link.stop:not(:disabled):hover { color: var(--brick); }
+  .btn.link.stop:not(:disabled):hover { color: var(--critical); }
   .btn.inline {
-    display: inline; height: auto; padding: 0; font: inherit; color: var(--muted);
+    display: inline; height: auto; padding: 0; font: inherit; color: var(--ink-2);
     text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px;
   }
   .btn.inline:hover { color: var(--ink); text-decoration-color: currentColor; }
@@ -104,122 +111,125 @@
   /* Today's run: the time column, the rail, the step, its actions; the log spans the step and actions columns. */
   .steps { list-style: none; margin: 0; padding: 0; }
   .step {
-    --mark-top: 5px;
-    --gap: 1.375rem;
+    --mark-top: 4px;
+    --gap: 14px;
     display: grid;
-    grid-template-columns: 5.25rem 1.25rem minmax(0, 1fr) 10.5rem;  /* fixed actions: every step's text wraps alike */
+    grid-template-columns: 4.5rem 1rem minmax(0, 1fr) 9.5rem;  /* fixed actions: every step's text wraps alike */
     grid-template-areas: "when rail body actions" ".    rail log  log";
-    column-gap: .875rem;
+    column-gap: 10px;
     padding-bottom: var(--gap);
   }
   .step:last-child { --gap: 0px; }
   .when {
     grid-area: when; text-align: right; white-space: nowrap;
-    font: 500 14px/22px var(--cond); color: var(--muted); font-variant-numeric: tabular-nums;
+    font: 400 11px/20px var(--cond); color: var(--muted); font-variant-numeric: tabular-nums;
   }
   .rail { grid-area: rail; position: relative; margin-bottom: calc(-1 * var(--gap)); }
   .rail::before {
     content: ""; position: absolute; z-index: 1; left: 50%; top: var(--mark-top);
-    width: 12px; height: 12px; margin-left: -6px; border-radius: 50%;
-    border: 2px solid var(--rule-strong); background: var(--paper);
+    width: 11px; height: 11px; margin-left: -5.5px; border-radius: 50%;
+    border: 2px solid var(--rule-strong); background: var(--pane);
   }
   .step:not(:last-child) .rail::after {
     content: ""; position: absolute; left: 50%; width: 2px; margin-left: -1px;
-    top: calc(var(--mark-top) + 16px); bottom: calc(4px - var(--mark-top)); background: var(--rule);
+    top: calc(var(--mark-top) + 14px); bottom: calc(4px - var(--mark-top)); background: var(--rule);
   }
-  .step[data-state="done"] .rail::before { background: var(--green); border-color: var(--green); }
-  .step[data-state="done"] .rail::after { background: var(--green); }
-  .step[data-state="queued"] .rail::before { border-color: var(--amber); }
+  .step[data-state="done"] .rail::before { background: var(--good); border-color: var(--good); }
+  .step[data-state="done"] .rail::after { background: var(--rule-strong); }
+  .step[data-state="queued"] .rail::before { border-color: var(--warning); }
   .step[data-state="running"] .rail::before {
-    border-color: var(--amber); background: radial-gradient(circle, var(--amber) 0 2px, var(--paper) 2.5px);
+    border-color: var(--warning); background: radial-gradient(circle, var(--warning) 0 2px, var(--pane) 2.5px);
     animation: pulse 1.8s ease-out infinite;
   }
   .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"], [data-state="abandoned"]) .rail::before {
-    background: var(--brick); border-color: var(--brick);
+    background: var(--critical); border-color: var(--critical);
   }
   .step[data-state="stalled"] .rail::before {  /* still running, but silent too long */
-    border-color: var(--brick); background: radial-gradient(circle, var(--brick) 0 2px, var(--paper) 2.5px);
-    animation: pulse-brick 1.8s ease-out infinite;
+    border-color: var(--critical); background: radial-gradient(circle, var(--critical) 0 2px, var(--pane) 2.5px);
+    animation: pulse-critical 1.8s ease-out infinite;
   }
   @keyframes pulse {
-    from { box-shadow: 0 0 0 0 var(--amber-halo); }
+    from { box-shadow: 0 0 0 0 var(--warning-halo); }
     to { box-shadow: 0 0 0 8px transparent; }
   }
-  @keyframes pulse-brick {
-    from { box-shadow: 0 0 0 0 var(--brick-halo); }
+  @keyframes pulse-critical {
+    from { box-shadow: 0 0 0 0 var(--critical-halo); }
     to { box-shadow: 0 0 0 8px transparent; }
   }
 
   .body { grid-area: body; min-width: 0; }
-  .name { font: 600 16px/22px var(--cond); }
-  .state { margin-top: 1px; font: 500 14px/1.35 var(--cond); color: var(--muted); font-variant-numeric: tabular-nums; }
-  .step[data-state="done"] .state { color: var(--green); }
-  .step:is([data-state="running"], [data-state="queued"]) .state { color: var(--amber); }
+  .name { font: 600 14px/20px var(--cond); }
+  .state { font: 500 12px/1.35 var(--cond); color: var(--ink-2); font-variant-numeric: tabular-nums; }
   .step:is([data-state="failed"], [data-state="stopped"], [data-state="unknown"], [data-state="stalled"], [data-state="abandoned"]) .state {
-    color: var(--brick);
+    color: var(--ink);
   }
-  .warn { margin-top: .25rem; font: 500 14px/1.35 var(--cond); color: var(--amber); }
-  .warn.late { color: var(--brick); }
-  .summary, .desc, .preview { max-width: 66ch; margin-top: .375rem; }
+  /* warnings: ink text behind a status icon (the warning yellow marks, it never carries text) */
+  .warn, .preview {
+    margin-top: 3px; padding-left: 18px; color: var(--ink-2);
+    background: var(--icon-warn) no-repeat 0 2px / 13px 13px;
+  }
+  .warn.late, .preview.fail { color: var(--ink); background-image: var(--icon-fail); }
+  .preview:not(.fail):empty { display: none; }
+  .summary, .desc, .preview, .warn { max-width: 80ch; }
+  .summary, .desc { margin-top: 3px; }
+  .summary { color: var(--ink-2); }
   .desc { color: var(--muted); white-space: pre-line; }
-  .preview { color: var(--amber); }
-  .preview.fail { color: var(--brick); }
-  .bar { height: 3px; margin-top: .625rem; background: var(--rule); border-radius: 2px; overflow: hidden; }
-  .bar > span { display: block; width: 0; height: 100%; background: var(--amber); transition: width .4s; }
+  .bar { height: 3px; margin-top: 6px; background: var(--rule); border-radius: 2px; overflow: hidden; }
+  .bar > span { display: block; width: 0; height: 100%; background: var(--ink-2); transition: width .4s; }
   .step:is([data-state="failed"], [data-state="stopped"], [data-state="stalled"], [data-state="abandoned"]) .bar > span {
-    background: var(--brick);
+    background: var(--critical);
   }
   .last-line {
-    margin-top: .375rem; font: 12px/1.4 var(--mono); color: var(--muted);
+    margin-top: 4px; font: 11px/1.4 var(--mono); color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .actions {
-    grid-area: actions; align-self: start; display: flex; align-items: center; justify-content: flex-end; gap: .25rem;
-    margin-top: -5px;
+    grid-area: actions; align-self: start; display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+    margin-top: -2px;
   }
   .log {
-    grid-area: log; margin: .75rem 0 0; padding: .625rem .75rem; max-height: 20rem; overflow: auto;
-    font: 12px/1.5 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word;
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
+    grid-area: log; margin: 8px 0 0; padding: 8px 10px; max-height: 20rem; overflow: auto;
+    font: 11px/1.5 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word;
+    background: var(--hover); border: 1px solid var(--rule); border-radius: 4px;
   }
 
   /* Dashboards, by group */
-  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1.25rem 2.5rem; align-items: start; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 8px 32px; align-items: start; }
   .group h3 {
-    padding-bottom: .375rem; border-bottom: 1px solid var(--rule-strong);
-    font: 600 14px/1.3 var(--cond); color: var(--muted);
+    padding-bottom: 3px; border-bottom: 1px solid var(--rule-strong);
+    font: 500 11px/1.3 var(--cond); color: var(--muted);
   }
   .apps { list-style: none; margin: 0; padding: 0; }
-  .app { display: flex; align-items: center; gap: .625rem; min-height: 2.75rem; padding: .375rem 0; border-bottom: 1px solid var(--rule); }
-  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--rule-strong); }
-  .app[data-state="up"] .dot { background: var(--green); border-color: var(--green); }
-  .app[data-state="partial"] .dot { border-color: var(--amber); }
-  .app-label { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: .5rem; }
+  .app { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 2px 0; border-bottom: 1px solid var(--rule); }
+  .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--rule-strong); }
+  .app[data-state="up"] .dot { background: var(--good); border-color: var(--good); }
+  .app[data-state="partial"] .dot { border-color: var(--warning); }
+  .app-label { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
   .app-name { font-weight: 500; }
-  .app-state { font: 500 12px/1.3 var(--cond); color: var(--muted); }
-  .app[data-state="up"] .app-state { color: var(--green); }
-  .app[data-state="partial"] .app-state { color: var(--amber); }
-  .app-actions { display: flex; align-items: center; gap: .25rem; }
-  .app .btn { height: 28px; }
+  .app-state { font: 400 11px/1.3 var(--cond); color: var(--muted); }
+  .app[data-state="up"] .app-state, .app[data-state="partial"] .app-state { color: var(--ink-2); }
+  .app-actions { display: flex; align-items: center; gap: 4px; }
 
   .empty { color: var(--muted); }
 
-  /* Phones (a Galaxy S24 Ultra is 412 px wide): the time goes above the step, the actions under it, and every
-     button is at least 44 px tall. */
+  /* Phones (a Galaxy S24 Ultra is 412 px wide): the page fills the width, the time goes above the step, the
+     actions under it, and every button is at least 44 px tall. */
   @media (max-width: 640px) {
-    .page { padding: 1rem 1rem 2.5rem; }
-    .top { flex-direction: column; align-items: flex-start; gap: .25rem; }
-    .btn { min-height: 44px; padding: 0 16px; font-size: 15px; }
+    .page { margin: 0; padding: 0 12px 24px; }
+    .top, .section-head { margin-inline: -12px; padding-inline: 12px; }
+    .top { flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; padding-block: 6px; }
+    .btn { min-height: 44px; padding: 0 16px; font-size: 14px; }
     .btn.link { padding: 0 10px; }
     .btn.inline { min-height: 0; padding: 0; font-size: inherit; }
+    body { font-size: 13px; }
     .step {
       --mark-top: 3px;
-      grid-template-columns: 1.25rem minmax(0, 1fr);
+      grid-template-columns: 1rem minmax(0, 1fr);
       grid-template-areas: "rail when" "rail body" "rail actions" "rail log";
-      column-gap: .75rem;
+      column-gap: 10px;
     }
-    .when { text-align: left; font-size: 12px; line-height: 18px; }
-    .actions { margin-top: .75rem; }
+    .when { text-align: left; line-height: 18px; }
+    .actions { margin-top: 8px; }
     .actions .start { flex: 1; }
     .last-line { white-space: normal; word-break: break-word; }
     .log { max-height: 60vh; }
@@ -458,7 +468,11 @@ function renderTask(t) {
   runWarn.hidden = !warn;
   runWarn.classList.toggle("late", Boolean(t.run && t.run.progress && t.run.progress.late));
   const notes = (t.run && t.run.warnings) || [];  // what this run's start went ahead despite
-  $(".started-with", el).textContent = notes.length ? `Started with: ${notes.join("; ")}` : "";
+  // one line each: a note that lists files keeps its head ("the laptop's newer data is not here yet (111 files)");
+  // the whole text is on hover and in the log
+  const brief = n => (n.length > 140 && n.includes(": ") ? n.slice(0, n.indexOf(": ")) : n);
+  $(".started-with", el).textContent = notes.length ? `Started with: ${notes.map(brief).join("; ")}` : "";
+  $(".started-with", el).title = notes.length ? `Started with: ${notes.join("; ")}` : "";
   $(".started-with", el).hidden = !notes.length;
   $(".summary-text", el).textContent = t.summary || t.description;
   $(".details", el).hidden = !(t.summary && t.description);  // no summary: the description is already shown

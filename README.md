@@ -29,7 +29,7 @@ HTML edits, the page and API both read this file.
 ```
 
 - **Multiple processes per app** (like CB Pricer's backend + frontend): add
-  more entries to `processes`. The card goes green only when all of them are
+  more entries to `processes`. The app shows Running only when all of them are
   up, and Start/Stop act on all of them together.
 - **`health: http`** (default is `tcp`): use this instead of the plain port
   check for anything that accepts a connection before it's actually ready to
