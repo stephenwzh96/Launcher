@@ -122,11 +122,18 @@ class TaskRunner:
         self.queue: list[str] = []  # ids still to run in the current "Run all"
         self.runs: dict[str, dict] = {}
         if self.state_path.exists():
-            self.runs = json.loads(self.state_path.read_text())
+            try:
+                self.runs = json.loads(self.state_path.read_text())
+            except (OSError, ValueError) as exc:  # cut short by a reboot mid-write: start with no history
+                print(f"[launcher] WARNING: task state unreadable ({exc}); starting without it")
 
     # ----- state -----
     def _save(self) -> None:
-        self.state_path.write_text(json.dumps(self.runs, indent=2))
+        """Written whole, then swapped in: a reboot mid-write never leaves half a file, which the launcher could
+        not read at its next start (review, 20 Nov 2026)."""
+        part = self.state_path.with_name(self.state_path.name + ".part")
+        part.write_text(json.dumps(self.runs, indent=2))
+        os.replace(part, self.state_path)
 
     def _settle(self, task_id: str) -> None:
         """Turn a finished process into done/failed, or stopped when Stop asked it to end. A run whose process this

@@ -14,6 +14,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import check_paths, load_apps, load_tasks
+from guard import refusal
 from process_control import is_up, start_process, stop_process
 from task_runner import TaskRunner
 
@@ -29,6 +30,16 @@ for warning in check_paths(list(APPS.values()), TASKS):
     print(f"[launcher] WARNING: {warning}")
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def local_only(request, call_next):
+    """This computer's own page and local tools only (guard.py): another page open in the browser may not start
+    or stop anything, and a name that is not this computer's is refused even to read."""
+    why = refusal(request.method, request.headers)
+    if why:
+        return PlainTextResponse(why, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")
