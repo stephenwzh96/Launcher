@@ -8,6 +8,8 @@ from pathlib import Path
 # Every machine that may run the sync (three-machine design, 20 Nov 2026). A machine that has never written a note is
 # not yet part of the sync: the others neither wait for it nor stage files for it (data_sync.joined_peers).
 MACHINES = ("desktop", "laptop", "vps")
+ALWAYS_ON = ("vps",)  # its sync runs every few minutes whatever it does: a recent sync says nothing about a daily run
+FORGET_AFTER_DAYS = 30  # a PC whose note has been missing (or unreadable) this long is no longer waited for
 DEFAULT_REPOS = (
     "Marco/Australia-Rates", "Marco/CB Pricer", "Marco/Curve", "Marco/FOMC", "Marco/launcher",
     "IBKR", "Trend", "FXMGT/JPMQFX01_build",

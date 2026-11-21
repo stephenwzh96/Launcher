@@ -13,7 +13,7 @@ from . import NOTE_FORMAT
 from .data_files import sqlite_open
 from .data_sync import _staged, load_state, pending_from_peers, read_alive, read_note, read_peer_notes
 from .gitops import out, read_repo
-from .settings import LAUNCHER_REPO, Settings
+from .settings import ALWAYS_ON, LAUNCHER_REPO, Settings
 
 PEER_RECENT_S = 15 * 60  # another PC's sync ran this recently: it is on
 PENDING_SHOWN = 5  # files named in the warning about the other PC's data not taken yet
@@ -161,7 +161,10 @@ def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None, m
     """Why `machine` (the PC holding the day; every other PC when None or not a known PC) may still be running
     today's daily run, from what its sync last wrote (its note and heartbeat): a daily task running there (the
     note's `running_tasks`; from an older tool, any repo marked running), or a sync run within PEER_RECENT_S (it is
-    on). Empty when neither, or it never wrote a note. Each line names the PC when more than one is checked."""
+    on). An always-on PC (settings.ALWAYS_ON, the VPS) syncs every few minutes whether or not it runs anything, so
+    for it only a daily task reported running counts (review of the three-machines branch, 21 Nov 2026: otherwise
+    every take-over from the VPS would need "take over anyway"). Empty when neither, or it never wrote a note. Each
+    line names the PC when more than one is checked."""
     if machine in cfg.peers:
         return _busy(cfg, machine, now, labels)
     found = []
@@ -183,6 +186,6 @@ def _busy(cfg: Settings, machine: str, now: float, labels: dict[str, str] | None
     if running:
         found.append(f"its last sync ({_ago(now - beat)}) reported a daily task running there "
                      f"({', '.join(running)})")
-    if now - beat < PEER_RECENT_S:
+    if now - beat < PEER_RECENT_S and machine not in ALWAYS_ON:
         found.append(f"its sync ran {_ago(now - beat)}, so it is on")
     return found

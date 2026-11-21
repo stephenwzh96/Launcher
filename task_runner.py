@@ -353,9 +353,15 @@ class TaskRunner:
                 continue
             err = self.start(task_id)
             local = now.astimezone(progress.zone(task.timezone))
+            holder = self.refusals.get(task_id)
+            if err is not None:  # nobody pressed: no offer (start anyway, take over, without the claim) is left for
+                with self.lock:  # the page to show next to the task (review, 21 Nov 2026)
+                    self.offers.pop(task_id, None)
+                    self.warnings.pop(task_id, None)
+                    self.refusals.pop(task_id, None)
             if err is None:
                 said.append(self._auto_record(task, day, "started", f"started by itself at {local:%H:%M}", now))
-            elif holder := self.refusals.get(task_id):
+            elif holder:
                 said.append(self._auto_record(task, day, "left", f"{day} is the {holder}'s: not started here", now))
             else:
                 first = last.get("day") != day or last.get("result") != "failed"
@@ -402,14 +408,22 @@ class TaskRunner:
         threading.Thread(target=loop, daemon=True).start()
         return True
 
-    def reserve(self, day: str | None = None, now: datetime | None = None) -> tuple[str | None, str]:
-        """"Run today here", or a later day: claim the daily tasks' day for this PC without starting anything, so a PC
-        that starts them by itself (`auto`) leaves that day to this one. Returns (why not, or None; the day)."""
-        now = now or datetime.now(UTC)
+    def _day_task(self) -> TaskConfig | None:
+        """The daily task whose day "today" means: the first with a claim and no `claim_day` rule (Start of Day: the
+        date in its timezone). The IBKR cycle's presses claim the same day from its first press (about 15:00) until
+        18:00 New York the next morning; before about 10:00 Sydney its day is still the night before's, which
+        reserving and the page's "whose day" leave alone (review, 21 Nov 2026)."""
         claimed = [t for t in self.tasks.values() if t.claim]
-        if not claimed:
+        return next((t for t in claimed if not t.claim_day), claimed[0] if claimed else None)
+
+    def reserve(self, day: str | None = None, now: datetime | None = None) -> tuple[str | None, str]:
+        """"Run today here", or a later day: claim the daily tasks' day (Start of Day's: _day_task) for this PC without
+        starting anything, so a PC that starts them by itself (`auto`) leaves that day to this one. Returns (why not,
+        or None; the day)."""
+        now = now or datetime.now(UTC)
+        task = self._day_task()
+        if task is None:
             return "no task here is a daily task (tasks.yaml claim)", day or ""
-        task = claimed[0]
         today = self._day(task, now)
         day = day or today
         try:
@@ -437,12 +451,12 @@ class TaskRunner:
         return f"could not reach GitHub ({res.error}): nothing reserved", day
 
     def day_holder(self, now: datetime | None = None) -> dict | None:
-        """The daily tasks' day as this PC last saw it: {"day", "holder" (None: nobody yet), "here" (this PC)}."""
+        """The daily tasks' day (Start of Day's: _day_task) as this PC last saw it: {"day", "holder" (None: nobody
+        yet), "here" (this PC)}."""
         now = now or datetime.now(UTC)
-        claimed = [t for t in self.tasks.values() if t.claim]
-        if not claimed:
+        task = self._day_task()
+        if task is None:
             return None
-        task = claimed[0]
         day, machine = self._day(task, now), self._machine()
         holder = next((c["holder"] for c in read_claims(self.sync_dir)
                        if c["claim"] == task.claim and c["day"] == day), None)

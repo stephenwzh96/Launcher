@@ -123,7 +123,8 @@ class AutoStartTest(AutoStartCase):
         first = MONDAY.replace(hour=9, minute=35)
         said = r.auto_tick(first)
         self.assertIn("could not start by itself at 09:35, tries again in 5 minutes", said[0])
-        self.assertEqual(r.offers["sod"], "start_without_claim")  # never taken by itself
+        self.assertNotIn("sod", r.offers)  # never taken by itself, and no "start without the claim" left on the page
+        self.assertNotIn("sod", r.warnings)
         self.assertEqual(r.auto_tick(first + timedelta(minutes=2)), [])
         self.assertEqual(len(r.auto_tick(first + timedelta(minutes=6))), 1)
         self.assertEqual(len(claimer.calls), 2)
@@ -193,6 +194,17 @@ class RunTodayHereTest(AutoStartCase):
         err, _ = r.reserve()
         self.assertIn("already the vps's", err)
         self.assertIn("take it over", err)
+
+    def test_today_is_start_of_days_day_whatever_order_the_tasks_are_in(self) -> None:
+        """Tuesday 08:00 Sydney: the cycle's day is still Monday's night (18:00 New York not passed), Start of Day's is
+        Tuesday; reserving and "whose day" mean Start of Day's."""
+        claimer = self.ok("desktop")
+        r = self.runner(claimer, self.cycle(), self.sod())
+        tuesday_8 = datetime(2026, 11, 24, 8, 0, tzinfo=SYD)
+        self.assertEqual(claim_day(self.cycle(), tuesday_8), "2026-11-23")
+        self.assertEqual(r.reserve(now=tuesday_8), (None, "2026-11-24"))
+        self.assertEqual(claimer.calls[0]["task"], "sod")
+        self.assertEqual(r.day_holder(tuesday_8)["day"], "2026-11-24")
 
     def test_refused_past_days_and_bad_dates_and_github_down(self) -> None:
         r = self.runner(FakeClaimer(ClaimResult(False, None, None, "timed out")))

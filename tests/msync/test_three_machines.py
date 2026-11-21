@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from machine_sync.data_sync import ImportResult, load_state, read_note, read_peer_notes, sync_data
 from machine_sync.gitops import read_repo
 from machine_sync.runner import leading_peer, run_once
-from machine_sync.settings import RELAY_AFTER_H, TOMBSTONE_DAYS
+from machine_sync.settings import FORGET_AFTER_DAYS, RELAY_AFTER_H, TOMBSTONE_DAYS
 from machine_sync.status import render
 from msync.helpers import TempDirCase, commit, plain_pcs, relay, run, syncthing, three_pcs
 
@@ -195,6 +195,30 @@ class ThreeMachineDataTest(TempDirCase):
         self.step(self.vps)
         self.run_pc(self.desk)
         self.assertFalse(self.staged(self.desk, "u.csv"))  # every PC shows it
+
+    def test_a_pc_gone_for_30_days_is_no_longer_waited_for(self) -> None:
+        self.write(self.desk, "g.csv", "G")
+        self.step(self.desk, to=[self.lap])
+        self.step(self.lap)
+        self.desk.note_path("vps").unlink()  # the VPS was rebuilt: its outbox folder is gone
+        self.run_pc(self.desk)
+        self.assertTrue(self.staged(self.desk, "g.csv"))  # still waited for
+        self.clock += (FORGET_AFTER_DAYS + 1) * 86400
+        self.run_pc(self.desk)
+        self.assertFalse(self.staged(self.desk, "g.csv"))  # no longer waited for: the laptop has it
+        text = render(self.desk, datetime.fromtimestamp(self.clock), [], ImportResult(), load_state(self.desk),
+                      read_peer_notes(self.desk), [], [], {})
+        self.assertIn("no note from vps for 31 days: no longer waited for", text)
+
+    def test_an_unreadable_but_running_pc_is_not_relayed(self) -> None:
+        self.write(self.vps, "v.csv", "V")
+        self.step(self.vps, to=[self.desk])
+        self.run_pc(self.desk)  # the desktop takes it; the laptop is off
+        self.clock += RELAY_AFTER_H * 3600 + 60
+        self.step(self.vps, to=[self.desk])  # the VPS runs on (its heartbeat is fresh)...
+        self.desk.note_path("vps").unlink()  # ...but its note cannot be read here (a newer tool, say)
+        self.run_pc(self.desk)
+        self.assertFalse(self.staged(self.desk, "v.csv"))  # not taken for a quiet PC: its own outbox has it
 
 
 class LeadingPeerTest(unittest.TestCase):

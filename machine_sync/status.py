@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 
 from .code_sync import RepoResult
-from .data_sync import ImportResult
-from .settings import Settings
+from .data_sync import ImportResult, forgotten, peers_seen
+from .settings import FORGET_AFTER_DAYS, Settings
 
 PEER_QUIET_MIN = 30
 LOG_MAX_BYTES = 2_000_000
@@ -17,15 +17,21 @@ def _clash_line(c: dict, where: str) -> str:
     return f"  changed on two PCs: {c['path']} ({c['kept']}'s version kept{backup})"
 
 
-def _peer_line(machine: str, note: dict | None, seen_at: float | None, now: datetime, joined: bool) -> str:
+def _peer_line(machine: str, note: dict | None, seen_at: float | None, now: datetime, state: dict) -> str:
     if note:
         seen = datetime.fromtimestamp(max(seen_at or 0, note.get("written", 0)))
         age = (now - seen).total_seconds() / 60
         quiet = f", {age / 60:.1f} h ago: off or offline?" if age > PEER_QUIET_MIN else ""
         return f"{machine} last ran {seen:%d %b %H:%M}{quiet}"
-    if joined:
-        return f"no note from {machine} now: is Syncthing connected?"
-    return f"{machine} not in the sync yet"
+    last = peers_seen(state).get(machine)
+    if last is None:
+        return f"{machine} not in the sync yet"
+    days = (now.timestamp() - last) / 86400 if last else 0.0
+    if forgotten(state, machine, now.timestamp()):
+        return (f"no note from {machine} for {days:.0f} days: no longer waited for (it joins again with its next "
+                "note)")
+    since = f" for {days:.1f} days" if days >= 1 else ""
+    return f"no note from {machine} now{since}: is Syncthing connected? (forgotten after {FORGET_AFTER_DAYS} days)"
 
 
 def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportResult, state: dict,
@@ -33,12 +39,11 @@ def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportR
            peer_seen: dict[str, float | None] | None = None) -> str:
     """peer_notes: every other PC's note (None: none, or not readable); peer_seen: each one's last heartbeat."""
     notes = {m: (peer_notes or {}).get(m) for m in cfg.peers}
-    joined = set(state.get("peers_seen") or [])
-    if not joined and not any(notes.values()):
+    if not peers_seen(state) and not any(notes.values()):
         others = " or ".join(cfg.peers)
         head_tail = f" (no note from the {others} yet: is the sync installed there and Syncthing connected?)"
     else:
-        head_tail = " (" + "; ".join(_peer_line(m, notes[m], (peer_seen or {}).get(m), now, m in joined)
+        head_tail = " (" + "; ".join(_peer_line(m, notes[m], (peer_seen or {}).get(m), now, state)
                                      for m in cfg.peers) + ")"
     head = f"Sync status on {cfg.machine}, {now:%d %b %H:%M}{head_tail}"
     lines = [head]

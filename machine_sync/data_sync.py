@@ -19,8 +19,9 @@ from pathlib import Path
 from . import NOTE_FORMAT
 from .data_files import data_files, hash_file, is_sqlite, skipped, sqlite_open
 from .gitops import git
-from .settings import (BACKUP_DAYS, BRAKE_DAY_FRACTION, BRAKE_DAY_MIN, BRAKE_FRACTION, BRAKE_MIN, MACHINES,
-                       RELAY_AFTER_H, STABLE_S, TOMBSTONE_DAYS, TOMBSTONE_MAX_DAYS, Settings)
+from .settings import (BACKUP_DAYS, BRAKE_DAY_FRACTION, BRAKE_DAY_MIN, BRAKE_FRACTION, BRAKE_MIN,
+                       FORGET_AFTER_DAYS, MACHINES, RELAY_AFTER_H, STABLE_S, TOMBSTONE_DAYS, TOMBSTONE_MAX_DAYS,
+                       Settings)
 
 OUTBOX_OWN = {"_state", "_tools", ".stfolder", ".stignore", ".stversions"}  # never data, never removed
 CLASH_KEEP_DAYS = 7
@@ -80,13 +81,29 @@ def read_peer_notes(cfg: Settings) -> dict[str, dict | None]:
     return {m: read_note(cfg, m) for m in cfg.peers}
 
 
-def joined_peers(state: dict, peer_notes: dict[str, dict | None]) -> tuple[dict[str, dict], list[str]]:
+def peers_seen(state: dict) -> dict[str, float]:
+    """Each other PC whose note this PC has read, and when it last could (state "peers_seen")."""
+    raw = state.get("peers_seen") or {}
+    if isinstance(raw, list):  # the branch's first form: names only
+        return {m: 0.0 for m in raw}
+    return {m: float(t or 0.0) for m, t in raw.items()}
+
+
+def forgotten(state: dict, machine: str, now: float | None) -> bool:
+    """`machine` wrote a note once, but none has been readable for FORGET_AFTER_DAYS (a PC rebuilt or retired, its
+    outbox folder gone): it is no longer waited for. It joins again with its next readable note."""
+    when = peers_seen(state).get(machine)
+    return bool(when) and now is not None and now - when > FORGET_AFTER_DAYS * 86400
+
+
+def joined_peers(state: dict, peer_notes: dict[str, dict | None],
+                 now: float | None = None) -> tuple[dict[str, dict], list[str]]:
     """(the other PCs whose note this run can read, the other PCs that wrote a note before but cannot be read now: a
-    newer tool, or the note missing). A PC never seen and with no note has not joined the sync yet: it is neither
-    waited for nor staged for."""
-    seen = set(state.get("peers_seen") or [])
+    newer tool, or the note missing, for less than FORGET_AFTER_DAYS). A PC never seen and with no note has not
+    joined the sync yet, and one forgotten has left it: neither is waited for nor staged for."""
+    seen = peers_seen(state)
     readable = {m: n for m, n in peer_notes.items() if n is not None}
-    unknown = sorted(m for m, n in peer_notes.items() if n is None and m in seen)
+    unknown = sorted(m for m, n in peer_notes.items() if n is None and m in seen and not forgotten(state, m, now))
     return readable, unknown
 
 
@@ -241,7 +258,7 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
     left for a later run. A file is deleted only when it has been missing on two runs at least STABLE_S apart (a
     job rewriting its output folder is not a deletion), and never in a repo a daily task is using right now."""
     files = data_files(cfg)
-    readable, unknown = joined_peers(state, peer_notes or {})
+    readable, unknown = joined_peers(state, peer_notes or {}, now)
     peer_files = [(n.get("files") or {}) for n in readable.values()]
     entries, unstable, errors, missing = state["files"], [], [], state["missing"]
     for rel, path in files.items():
@@ -573,7 +590,7 @@ def refresh_outbox(cfg: Settings, state: dict, peer_notes: dict[str, dict | None
     A PC that wrote a note before but cannot be read this run (a newer tool, its note missing) is treated as the
     two-PC tool treated the other PC then: nothing new is sent for it and nothing already on its way is thrown
     away. With no readable note at all the outbox is left as it is."""
-    readable, unknown = joined_peers(state, peer_notes)
+    readable, unknown = joined_peers(state, peer_notes, now)
     if not readable:
         return 0
     peer_files = [n.get("files") or {} for n in readable.values()]
@@ -585,12 +602,14 @@ def refresh_outbox(cfg: Settings, state: dict, peer_notes: dict[str, dict | None
         if now is None:
             return False
         if maker not in quiet:
+            # its note, or when that cannot be read (a newer tool during an upgrade) its heartbeat alone: a PC that
+            # is running is never taken for a quiet one (review, 21 Nov 2026)
             note = readable.get(maker)
             try:
                 seen = max(float((note or {}).get("written") or 0.0), float(read_alive(cfg, maker) or 0.0))
             except (TypeError, ValueError):
                 seen = 0.0
-            quiet[maker] = note is None or now - seen > RELAY_AFTER_H * 3600
+            quiet[maker] = now - seen > RELAY_AFTER_H * 3600
         return quiet[maker]
 
     unstable = set(state["unstable"])
@@ -700,8 +719,11 @@ def sync_data(cfg: Settings, state: dict, peer_notes: dict[str, dict | None], no
     """Scan, import the other PCs' newer versions, refresh this PC's outbox, then write the note (files first, then
     the note that names them) and the state. peer_notes: every other PC's note (read_peer_notes; None for one not
     there yet or not to be followed)."""
-    readable, _unknown = joined_peers(state, peer_notes)
-    state["peers_seen"] = sorted(set(state.get("peers_seen") or []) | set(readable))
+    seen = peers_seen(state)
+    for machine, note in peer_notes.items():
+        if note is not None:
+            seen[machine] = now  # when each other PC's note was last readable here (joined_peers, forgotten)
+    state["peers_seen"] = seen
     scan(cfg, state, now, set(frozen_repos), peer_notes)
     res = import_from_peers(cfg, state, peer_notes, set(frozen_repos), allow_deletes, now)
     res.skipped = [*state["errors"], *res.skipped]
