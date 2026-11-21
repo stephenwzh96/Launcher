@@ -29,6 +29,35 @@ class RunnerTest(TempDirCase):
         syncthing(self.lap, self.desk)
         self.assertIn(f"laptop last ran {later:%d %b %H:%M}", self.run_pc(self.desk, now=later))
 
+    def test_a_long_run_does_not_take_a_heartbeat_written_during_it_for_clock_skew(self) -> None:
+        """The VPS's first run hashed 5,000 files for 150 s; the laptop rewrote its heartbeat meanwhile, and the check
+        against the start-of-run time read it as 64 s ahead (21 Nov 2026). The check uses the time it runs."""
+        import json as _json
+        from unittest import mock
+
+        from machine_sync import runner
+
+        now = datetime.now() + timedelta(minutes=5)
+        self.run_pc(self.lap, now=now)
+        syncthing(self.lap, self.desk)
+        ticks = []
+
+        def clock() -> float:  # the run starts at 1000; everything after it, its skew check included, at 1150
+            ticks.append(1)
+            return 1000.0 if len(ticks) == 1 else 1150.0
+
+        def sync_then_beat(cfg, state, notes, at, **kw):
+            res = runner_sync(cfg, state, notes, at, **kw)
+            alive = self.desk.note_path("laptop").with_name("laptop.alive.json")
+            alive.write_text(_json.dumps({"written": now.timestamp() + 120}))  # rewritten during the run
+            return res
+
+        runner_sync = runner.sync_data
+        with mock.patch.object(runner, "sync_data", sync_then_beat), \
+                mock.patch.object(runner.time, "monotonic", clock):
+            text = self.run_pc(self.desk, now=now)
+        self.assertNotIn("clock is about", text)
+
     def test_status_warns_when_peer_clock_is_ahead(self) -> None:
         now = datetime.now() + timedelta(minutes=5)
         self.run_pc(self.desk, now=now)

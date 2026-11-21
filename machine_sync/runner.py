@@ -2,6 +2,7 @@
 wake by the "Machine sync" scheduled task."""
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -57,6 +58,7 @@ def leading_peer(peer_notes: dict[str, dict | None], repo: str) -> tuple[str | N
 
 def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool, procs: list[Proc] | None,
          tasks: list[dict] | None, uv_cmd: list[str] | None) -> str:
+    started = time.monotonic()  # the clock-skew check runs at the end: `now` plus the time this run took
     warnings: list[str] = []
     shown_notes = read_peer_notes(cfg)
     peer_notes = dict(shown_notes)
@@ -117,7 +119,10 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
         warnings.append(f"the data step failed ({type(err).__name__}: {err}); next run tries again")
     alive = {m: read_alive(cfg, m) for m in cfg.peers}
     for machine, note in shown_notes.items():
-        if skew := clock_skew(cfg, state, machine, note, alive[machine], now.timestamp()):
+        # the heartbeats were read now, after the data step: compare them with now, not the run's start (a first
+        # run on a new PC hashes for minutes, and a heartbeat rewritten meanwhile looked ahead; 21 Nov 2026)
+        checked = now.timestamp() + (time.monotonic() - started)
+        if skew := clock_skew(cfg, state, machine, note, alive[machine], checked):
             warnings.append(skew)
     text = render(cfg, now, results, res, state, shown_notes, warnings, read_claims(cfg.sync_dir), peer_seen=alive)
     write_status(cfg, now, text)

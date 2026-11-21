@@ -112,8 +112,8 @@ def _reflog_activity(repo: Path) -> float:
     lines = out(repo, "reflog", "show", "--date=unix", "--format=%gd%x09%gs", "HEAD").splitlines()
     for line in lines:  # newest first
         selector, _, subject = line.partition("\t")
-        if subject.startswith(REFLOG_ACTION):
-            continue
+        if subject.startswith(REFLOG_ACTION) or subject.startswith("clone:"):
+            continue  # this tool's own moves, and a clone (a new PC's checkout is not work there)
         try:
             return float(selector[selector.index("{") + 1:selector.index("}")])
         except ValueError:

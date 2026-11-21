@@ -81,6 +81,15 @@ class ReadRepoTest(TempDirCase):
         commit(self.repo, "c.txt", "c")
         self.assertGreater(read_repo(self.repo).last_activity, before)
 
+    def test_a_fresh_clone_is_not_activity(self) -> None:
+        """A new PC's clone of a repo ("clone: from ..." in its reflog) is not work there: it must not make that PC
+        the one last worked on, or the others would follow its checkout (the VPS's join, 21 Nov 2026)."""
+        fresh = clone(self.origin, self.tmp / "fresh" / "repo")
+        self.assertEqual(read_repo(fresh).last_activity, 0.0)
+        time.sleep(1.1)
+        commit(fresh, "d.txt", "d")
+        self.assertGreater(read_repo(fresh).last_activity, 0.0)
+
     def test_network_call_times_out(self) -> None:
         import socket
         import threading
