@@ -237,7 +237,8 @@ class TaskRunner:
         labels = {t.id: t.label for t in self.tasks.values()}
         holder = self._holder_elsewhere(task, cfg.machine)
         now = time.time()
-        busy = {m: startcheck.peer_busy(cfg, now, labels, machine=m)
+        held = (task.claim, self._day(task)) if holder in cfg.peers and task.claim else None
+        busy = {m: startcheck.peer_busy(cfg, now, labels, machine=m, claim=held)
                 for m in ([holder] if holder in cfg.peers else cfg.peers)}
         busy = {m: lines for m, lines in busy.items() if lines}
         if not busy:

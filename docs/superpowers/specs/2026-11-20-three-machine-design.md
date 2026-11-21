@@ -49,6 +49,12 @@ These take precedence over the sections below.
 - After desktop Claude's review (21 Nov):
   - **The take-over fence and an always-on PC.** `settings.ALWAYS_ON = ("vps",)`. For the VPS, only a daily task
     its last sync reports running fences a take-over; a recent sync no longer counts, since the VPS always has one.
+    And a VPS whose last note does not list its claim of the day yet synced before it took the day (an automatic
+    start between two syncs), so it is fenced until its next sync: the note's own claims list, no clock comparison
+    between the PCs (desktop Claude, re-check of 07546ca).
+  - **`.prev` is not data** (`data_files.SKIP_DIRS`): Trend's data/raw/.prev holds one build's copies of replaced raw
+    files until it releases them; the next build on the same PC recovers or deletes them. Existing copies become "no
+    longer data", forgotten and never deleted, and the laptop's standing held deletions of them stop.
   - **A PC gone for `FORGET_AFTER_DAYS` (30)** is no longer waited for. "Gone" means its note has been missing or
     unreadable that long, as when the VPS is rebuilt or retired and its outbox folder removed. The status says so,
     and the PC joins again with its next readable note. `state["peers_seen"]` now records when each PC's note was
@@ -341,7 +347,7 @@ nothing trades until Stephen approves the list.
 | Situation | What to do |
 |---|---|
 | Stephen wants the desktop or the laptop for a day | Press "Run today here" before 09:30 (or the day before). The PC connects to the VPS's Gateway and database, as today: `IBKR_TARGET=vps`, client ids 10-19 or 20-29 |
-| The VPS's Start of Day has started but Stephen wants to switch | Stop it on the VPS's launcher, then take over on the PC. The fence refuses while the VPS's last sync (every 5 minutes) reports a daily task running; a recent sync alone does not count for the always-on VPS. "Force take-over" is for a VPS that is up but stuck |
+| The VPS's Start of Day has started but Stephen wants to switch | Stop it on the VPS's launcher, then take over on the PC. The fence refuses while the VPS's last sync (every 5 minutes) reports a daily task running, or came before the VPS took the day; a recent sync alone does not count for the always-on VPS. "Force take-over" is for a VPS that is up but stuck |
 | The VPS is down in the morning | Start Start of Day by hand on the desktop or the laptop: the claim is taken over once the VPS has been silent for 15 minutes. The envelopes are made. **The cycle cannot run until the VPS is back, because the database and the Gateway live there.** If it is back before 16:10, the PC that holds the day makes the presses against it |
 | The VPS dies overnight | The outside dead-man alerts. When the VPS is back (autologon, then the Gateway logon task), the resume task restarts `run`, which resumes the cycle. Missed windows are not traded, and the reconcile reports them |
 | The VPS is lost (rebuild) | Contabo snapshot, or a new VPS from the runbook. The database comes from the latest `trading_vps_*.dump`, which every machine now holds through the data sync |

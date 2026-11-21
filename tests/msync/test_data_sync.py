@@ -436,6 +436,14 @@ class DataSyncTest(TempDirCase):
         (self.lap.repo_path("Trend") / ".gitignore").write_text("data/\n*.log\nlive/\n")
         self.assertEqual(sorted(data_files(self.lap)), ["Trend/data/ok.csv"])
 
+    def test_a_builds_previous_copies_are_not_data(self) -> None:
+        """Trend's data/raw/.prev holds the copies one Start of Day build keeps until it releases them; the next build
+        on the same PC recovers or deletes them. On another PC they would only be put back over a missing file."""
+        for rel in ("data/raw/boe/rates.csv", "data/raw/.prev/boe/rates.csv@123-1"):
+            self.write(self.lap, rel, "x")
+        (self.lap.repo_path("Trend") / ".gitignore").write_text("data/\n")
+        self.assertEqual(sorted(data_files(self.lap)), ["Trend/data/raw/boe/rates.csv"])
+
     def test_receiver_ignores_paths_its_own_rules_exclude(self) -> None:
         import json
 

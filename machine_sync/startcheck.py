@@ -157,23 +157,28 @@ def code_record(cfg: Settings, repos: list[str]) -> list[str]:
     return lines
 
 
-def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None, machine: str | None = None) -> list[str]:
+def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None, machine: str | None = None,
+              claim: tuple[str, str] | None = None) -> list[str]:
     """Why `machine` (the PC holding the day; every other PC when None or not a known PC) may still be running
     today's daily run, from what its sync last wrote (its note and heartbeat): a daily task running there (the
     note's `running_tasks`; from an older tool, any repo marked running), or a sync run within PEER_RECENT_S (it is
     on). An always-on PC (settings.ALWAYS_ON, the VPS) syncs every few minutes whether or not it runs anything, so
     for it only a daily task reported running counts (review of the three-machines branch, 21 Nov 2026: otherwise
-    every take-over from the VPS would need "take over anyway"). Empty when neither, or it never wrote a note. Each
-    line names the PC when more than one is checked."""
+    every take-over from the VPS would need "take over anyway"). `claim` (name, day): the day `machine` holds; an
+    always-on PC whose last note does not list that claim yet synced before it took the day, so its "nothing running"
+    is from before the run could start (an automatic start at 09:30 between two syncs), and it counts as busy until
+    its next sync. The note's own claims list needs no clock comparison between the PCs. Empty when neither, or it
+    never wrote a note. Each line names the PC when more than one is checked."""
     if machine in cfg.peers:
-        return _busy(cfg, machine, now, labels)
+        return _busy(cfg, machine, now, labels, claim)
     found = []
     for other in cfg.peers:
         found += [f"the {other}: {line}" for line in _busy(cfg, other, now, labels)]
     return found
 
 
-def _busy(cfg: Settings, machine: str, now: float, labels: dict[str, str] | None) -> list[str]:
+def _busy(cfg: Settings, machine: str, now: float, labels: dict[str, str] | None,
+          claim: tuple[str, str] | None = None) -> list[str]:
     note = read_note(cfg, machine) or {}
     beat = _seen(cfg, machine, note)
     if not beat:
@@ -188,4 +193,10 @@ def _busy(cfg: Settings, machine: str, now: float, labels: dict[str, str] | None
                      f"({', '.join(running)})")
     if now - beat < PEER_RECENT_S and machine not in ALWAYS_ON:
         found.append(f"its sync ran {_ago(now - beat)}, so it is on")
+    if machine in ALWAYS_ON and claim and not running and isinstance(note.get("claims"), list):
+        name, day = claim
+        if not any(isinstance(c, dict) and c.get("claim") == name and c.get("day") == day
+                   and c.get("holder") == machine for c in note["claims"]):
+            found.append(f"its last sync ({_ago(now - beat)}) came before it took {day}, so whether it is running "
+                         "is not known until its next sync (every few minutes)")
     return found

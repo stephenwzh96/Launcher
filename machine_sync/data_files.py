@@ -14,7 +14,10 @@ from .settings import Settings
 SKIP_DIRS = {".git", ".venv", "venv", "env", "ENV", ".venv-ib", "node_modules", "__pycache__", ".pytest_cache",
              ".ruff_cache", ".mypy_cache", ".cache", ".vite", ".claude", ".workbuddy-ai", "logs", "htmlcov",
              ".streamlit", ".idea", ".vscode", ".superpowers", ".stversions", ".stfolder",
-             ".staging"}  # .staging: where a job writes before it swaps the result in (Trend's live-update)
+             ".staging", ".prev"}
+# .staging: where a job writes before it swaps the result in (Trend's live-update). .prev: the copies one Start of Day
+# build keeps of the raw files it replaces until it releases them (Trend data/sources/http.py); the next build on the
+# same PC recovers or deletes them, and on another PC one would only be put back over a missing file
 # files (and folders) a job is still writing: half a file must never reach the other PC
 TEMP_SUFFIX = (".tmp", ".partial", ".part")
 SKIP_FILE = re.compile(r"""(?ix)^(

@@ -235,6 +235,25 @@ class TakeOverFenceTest(StartCheckCase):
         self.assert_refused(r, "the vps may still be running", "(MTFA Start of Day)", offer="take_over_anyway",
                             take_over=True)
 
+    def test_always_on_vps_whose_last_sync_came_before_its_claim_refuses(self) -> None:
+        """The VPS took the day (an automatic start) after its last sync: that sync's "nothing running" is from before
+        the run began, so a take-over waits for its next sync (review of 07546ca, 21 Nov 2026). Its note lists the
+        claims it held when it was written, which needs no clock comparison between the PCs."""
+        r = self.vps_holds_today(2, running_tasks=[], claims=[])
+        self.assert_refused(r, "the vps may still be running", "came before it took", offer="take_over_anyway",
+                            take_over=True)
+
+    def test_always_on_vps_synced_since_its_claim_with_nothing_running_is_taken_over(self) -> None:
+        import json
+
+        r = self.vps_holds_today(2, running_tasks=[])
+        day = r._day(r.tasks["sod"])
+        note = self.home / "VpsSync" / "_state" / "vps.json"
+        data = json.loads(note.read_text())
+        data["claims"] = [{"claim": "daily", "day": day, "holder": "vps", "at": "2026-11-23T09:30:05"}]
+        note.write_text(json.dumps(data))
+        self.assertIsNone(r.start("sod", take_over=True))
+
 
 class PendingDataTest(StartCheckCase):
     """The other PC's newer data in the daily tasks' repos, not taken here yet, is a warning with the start (never a
