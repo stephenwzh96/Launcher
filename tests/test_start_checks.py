@@ -209,6 +209,51 @@ class TakeOverFenceTest(StartCheckCase):
         self.peer_note(1, running_tasks=["sod"])
         self.assertIsNone(self.runner().start("sod"))  # the claim decides; the fence is only for a take-over
 
+    def vps_holds_today(self, minutes_ago: float, **fields) -> TaskRunner:
+        """The VPS holds today's claim (as this PC recorded it) and synced `minutes_ago`."""
+        import json
+        import time
+
+        from machine_sync.daily import record_claim
+
+        state = self.home / "VpsSync" / "_state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "vps.json").write_text(json.dumps({"format": 2, "machine": "vps", "files": {},
+                                                    "written": time.time() - minutes_ago * 60, **fields}))
+        r = self.runner()
+        record_claim(self.sync_dir, "daily", r._day(r.tasks["sod"]), "vps", "2026-11-23T09:30:05")
+        return r
+
+    def test_always_on_vps_is_taken_over_once_its_run_has_stopped(self) -> None:
+        """The VPS syncs every few minutes whatever it does: only a daily task it reports running fences it."""
+        r = self.vps_holds_today(2, running_tasks=[])
+        self.assertIsNone(r.start("sod", take_over=True))
+        self.assertTrue(self.claimer.calls[0]["take_over"])
+
+    def test_always_on_vps_running_the_day_refuses(self) -> None:
+        r = self.vps_holds_today(2, running_tasks=["sod"])
+        self.assert_refused(r, "the vps may still be running", "(MTFA Start of Day)", offer="take_over_anyway",
+                            take_over=True)
+
+    def test_always_on_vps_whose_last_sync_came_before_its_claim_refuses(self) -> None:
+        """The VPS took the day (an automatic start) after its last sync: that sync's "nothing running" is from before
+        the run began, so a take-over waits for its next sync (review of 07546ca, 21 Nov 2026). Its note lists the
+        claims it held when it was written, which needs no clock comparison between the PCs."""
+        r = self.vps_holds_today(2, running_tasks=[], claims=[])
+        self.assert_refused(r, "the vps may still be running", "came before it took", offer="take_over_anyway",
+                            take_over=True)
+
+    def test_always_on_vps_synced_since_its_claim_with_nothing_running_is_taken_over(self) -> None:
+        import json
+
+        r = self.vps_holds_today(2, running_tasks=[])
+        day = r._day(r.tasks["sod"])
+        note = self.home / "VpsSync" / "_state" / "vps.json"
+        data = json.loads(note.read_text())
+        data["claims"] = [{"claim": "daily", "day": day, "holder": "vps", "at": "2026-11-23T09:30:05"}]
+        note.write_text(json.dumps(data))
+        self.assertIsNone(r.start("sod", take_over=True))
+
 
 class PendingDataTest(StartCheckCase):
     """The other PC's newer data in the daily tasks' repos, not taken here yet, is a warning with the start (never a

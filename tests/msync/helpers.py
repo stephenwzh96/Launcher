@@ -1,5 +1,5 @@
-"""Test helpers for machine_sync: a bare "GitHub" repo per app, two PCs (desktop and laptop) in temp folders, and
-Syncthing simulated by mirroring a PC's outbox to the same folder under the other PC's home."""
+"""Test helpers for machine_sync: a bare "GitHub" repo per app, two or three PCs (desktop, laptop, VPS) in temp
+folders, and Syncthing simulated by mirroring a PC's outbox to the same folder under another PC's home."""
 import os
 import shutil
 import stat
@@ -83,6 +83,34 @@ def syncthing(src: Settings, dst: Settings) -> None:
         shutil.rmtree(target, onexc=_force)
     if source.exists():
         shutil.copytree(source, target)
+
+
+def relay(via: Settings, maker: str, dst: Settings) -> None:
+    """Syncthing passing `maker`'s outbox on from `via`'s copy to dst (maker itself is off): every outbox is shared
+    with every PC, and a receive-only copy serves its files to the others."""
+    source = via.outbox(maker)
+    target = dst.outbox(maker)
+    if target.exists():
+        shutil.rmtree(target, onexc=_force)
+    if source.exists():
+        shutil.copytree(source, target)
+
+
+def plain_pcs(tmp: Path, machines: tuple[str, ...] = ("desktop", "laptop", "vps")) -> dict[str, Settings]:
+    """PCs whose only synced folder is a plain one, Data (no Git needed: fast data tests)."""
+    return {m: Settings(home=tmp / m, machine=m, repos=(), plain_roots={"Data": []}) for m in machines}
+
+
+def three_pcs(tmp: Path, repos: tuple[str, ...] = ("Trend",)) -> tuple[Settings, Settings, Settings]:
+    """Desktop, laptop and VPS homes, each with a clone of every repo from shared bare origins."""
+    origins = {r: make_origin(tmp, r.replace("/", "_")) for r in repos}
+    pcs = []
+    for machine in ("desktop", "laptop", "vps"):
+        home = tmp / machine
+        for r in repos:
+            clone(origins[r], home / r)
+        pcs.append(Settings(home=home, machine=machine, repos=tuple(repos), plain_roots={}))
+    return pcs[0], pcs[1], pcs[2]
 
 
 class locked:

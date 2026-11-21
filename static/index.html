@@ -86,6 +86,10 @@
   }
   section + section .section-head { border-top: 1px solid var(--rule); }
   .section-head .btn { margin-left: auto; }
+  /* whose day it is (tasks.yaml claim and auto): one quiet line under the section head */
+  .day-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 8px 0 0;
+              font: 400 12px/1.4 var(--cond); color: var(--muted); }
+  .day-line[hidden] { display: none; }
   h2 { font: 600 12px/1.2 var(--cond); }
 
   /* Buttons: one filled (ink) action per step; outlined for the rest; Stop, Log and Details as text. */
@@ -263,6 +267,11 @@
       <span class="count" id="run-count"></span>
       <button type="button" class="btn secondary" id="run-all">Run all</button>
     </div>
+    <p class="day-line" id="day-line" hidden>
+      <span id="day-text"></span>
+      <button type="button" class="btn link" id="run-here">Run today here</button>
+      <button type="button" class="btn link" id="reserve">Reserve a day…</button>
+    </p>
     <ol class="steps" id="tasks"></ol>
   </section>
 
@@ -335,6 +344,14 @@ async function init() {
   tick();
   setInterval(tick, 10000);
   $("#run-all").onclick = runAll;
+  $("#run-here").onclick = () => {
+    if (confirm("Claim today for this PC? No other PC starts today's run by itself then: start it here.")) reserveDay();
+  };
+  $("#reserve").onclick = () => {
+    const next = new Date(Date.now() + 86400000).toLocaleDateString("en-CA");
+    const day = prompt("Reserve which day for this PC? (YYYY-MM-DD)", next);
+    if (day) reserveDay(day.trim());
+  };
   $("#remind-dismiss").onclick = () => {
     if (reminder) dismissed = `${reminder.task_id}|${reminder.t}|${reminder.slot}`;
     $("#remind").hidden = true;
@@ -522,6 +539,7 @@ async function refreshTasks() {
   if (!tasks.length) $("#tasks").innerHTML = '<li class="empty">No tasks yet: add them to tasks.yaml.</li>';
   tasks.forEach(renderTask);
   renderReminder(data.reminders);
+  renderDay(data.day, tasks);
   showRunAllRefusal(data.run_all_refusal);
   for (const t of tasks) {  // a run just ended: what is due has changed
     const state = t.run ? t.run.state : "none";
@@ -537,6 +555,31 @@ async function refreshTasks() {
   tick();
   for (const id of openLogs) await loadLog(id);
   taskTimer = setTimeout(refreshTasks, busy ? 2000 : 5000);
+}
+
+// Whose day it is (tasks.yaml claim and auto): the PC holding the daily tasks' day, or the PC that starts it by itself
+// and when; "Run today here" claims it for this PC without starting anything, "Reserve a day" a later one.
+function renderDay(day, tasks) {
+  const line = $("#day-line");
+  line.hidden = !day;
+  if (!day) return;
+  const auto = tasks.map(t => t.auto).find(a => a);
+  let text;
+  if (day.holder && day.holder === day.here) text = `Today (${day.day}) runs on this PC, the ${day.here}.`;
+  else if (day.holder) text = `Today (${day.day}) runs on the ${day.holder}.`;
+  else if (auto) {
+    const waiting = auto.pc === day.here && !auto.armed ? " once switched on (MachineSync\\auto_start.on)" : "";
+    text = `Today (${day.day}) is not claimed yet: the ${auto.pc} starts it by itself from ${auto.at}${waiting}.`;
+  } else text = `Today (${day.day}) is not claimed yet.`;
+  if ($("#day-text").textContent !== text) $("#day-text").textContent = text;
+  $("#run-here").hidden = Boolean(day.holder);
+}
+
+async function reserveDay(day) {
+  const query = day ? `?day=${encodeURIComponent(day)}` : "";
+  const data = await (await fetch(`/api/day/reserve${query}`, { method: "POST" })).json();
+  alert(data.ok ? `${data.day} is this PC's: no other PC starts that day's run by itself.` : data.errors.join("\n"));
+  refreshTasks();
 }
 
 // Start of Day reminder (tasks.yaml remind): from the first reminder time on a weekday, until the day's record

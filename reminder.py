@@ -13,7 +13,9 @@ heartbeat shows no run for the trade day's cycle (the first press), and while it
 approval (approve on MTFA Operations, then Start trading). None while a run for it is beating or after it ended any
 other way (done, halted: the cycle's own Telegram alert says so).
 
-It only reminds: the task is still started by hand (Trend DECISIONS 2026-10-27, no scheduled task).
+It only reminds: the task is started by hand (Trend DECISIONS 2026-10-27, no scheduled task), except on the PC a
+task's `auto` names, once that PC is switched on for it (three-machine design, 20 Nov 2026: the VPS runs the day),
+where the launcher starts it when this module says it is due (task_runner.auto_tick).
 """
 import json
 import re
@@ -45,11 +47,12 @@ def _json(path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def cycle_due(task: TaskConfig, now: datetime, running: bool, day: str) -> dict | None:
+def cycle_due(task: TaskConfig, now: datetime, running: bool, day: str, at: list[str] | None = None) -> dict | None:
     """The IBKR cycle's reminder at `now`, or None (module docstring). `day`: the trade day the task's press would
-    claim (task_runner.claim_day), whose cycle is `<day>-<mode>`."""
+    claim (task_runner.claim_day), whose cycle is `<day>-<mode>`. `at`: other times than `remind.at` (the task's
+    automatic start)."""
     local = now.astimezone(progress.zone(task.timezone))
-    slots = sorted(time.fromisoformat(at) for at in task.remind.at)
+    slots = sorted(time.fromisoformat(t) for t in (at or task.remind.at))
     passed = [s for s in slots if local.time() >= s]
     if local.weekday() >= 5 or not passed or running:
         return None
@@ -94,16 +97,18 @@ def cycle_due(task: TaskConfig, now: datetime, running: bool, day: str) -> dict 
 
 
 def due(task: TaskConfig, now: datetime, running: bool, prog: dict | None, preview: str = "",
-        day: str | None = None) -> dict | None:
+        day: str | None = None, at: list[str] | None = None) -> dict | None:
     """The reminder `task` is due at `now` (aware), or None. `running`: the launcher is running the task; `prog`: its
     progress file (progress.read); `preview`: its preview's last line; `day`: the day its press would claim (the
-    IBKR cycle's trade day)."""
+    IBKR cycle's trade day); `at`: other times than `remind.at` (the task's automatic start, task_runner.auto_tick,
+    which starts the task when this says it is due, except for the cycle's approval stage)."""
     if not task.remind:
         return None
     if task.remind.heartbeat:
-        return cycle_due(task, now, running, day or now.astimezone(progress.zone(task.timezone)).date().isoformat())
+        return cycle_due(task, now, running, day or now.astimezone(progress.zone(task.timezone)).date().isoformat(),
+                         at=at)
     local = now.astimezone(progress.zone(task.timezone))
-    slots = sorted(time.fromisoformat(at) for at in task.remind.at)
+    slots = sorted(time.fromisoformat(t) for t in (at or task.remind.at))
     passed = [s for s in slots if local.time() >= s]
     if local.weekday() >= 5 or not passed or running:
         return None

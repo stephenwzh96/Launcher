@@ -18,7 +18,14 @@
 # on a weekday, once `go` (Start of Day's record for t) says GO, a banner while the heartbeat shows no run for the
 # trade day's cycle (the first press), and while its last run ended waiting for approval (approve, then Start
 # trading); none while a run beats or once it ended otherwise (team review, 20 Nov 2026, reminder.cycle_due).
-# Only a reminder: Start of Day stays started by hand (Trend DECISIONS 2026-10-27).
+# Only a reminder: Start of Day stays started by hand (Trend DECISIONS 2026-10-27), except as `auto` says.
+# auto (optional; three-machine design, 20 Nov 2026, D65: the VPS runs the day): the task starts by itself on the PC
+# `pc` names ("pc", not "on": YAML reads a bare on as true), from `at` on weekdays, when its reminder's rules say it is due (Start of Day: not run for the day; the
+# IBKR cycle: GO, first press not done; never the second press, which follows the approval through IBKR's resume
+# task). Only while that PC has the switch file MachineSync\auto_start.on (made by hand once it passes D65's
+# readiness list; delete it to stop). A day another PC has claimed ("Run today here" there, or a press) is left to
+# it. With LAUNCHER_NOTIFY (a PowerShell script taking -Message, e.g. C:\IBC\send-alert.ps1) each automatic start,
+# and each day left to another PC, is also sent on.
 
 - id: aijpmt1a-refresh
   label: MTFA Start of Day
@@ -36,6 +43,9 @@
   remind:
     at: ["11:00", "12:30"]
     record: ../Trend/AIJPMT1A_build/data/logs/sod_{t}.json
+  auto:  # the VPS starts it at 09:30 unless another PC holds the day (only once its MachineSync\auto_start.on exists)
+    pc: vps
+    at: "09:30"
 
 - id: ibkr-paper-cycle
   label: IBKR paper cycle
@@ -57,3 +67,6 @@
     at: ["15:00", "15:30", "15:50"]
     heartbeat: ../IBKR/logs/heartbeat.json  # IBKR's IBKR_HEARTBEAT_FILE on this PC: change both together
     go: ../Trend/AIJPMT1A_build/data/logs/sod_{t}.json
+  auto:  # the first press, on the VPS once Start of Day says GO, not before 15:00 (the second follows the approval)
+    pc: vps
+    at: "15:00"

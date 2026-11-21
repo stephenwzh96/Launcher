@@ -1,4 +1,5 @@
-"""Code step: keep each repo on the branch and commit of the PC last worked on (design, "Code step").
+"""Code step: keep each repo on the branch and commit of the PC last worked on in it, of all the PCs (design, "Code
+step"; the runner picks that PC: runner.leading_peer).
 Never commits, pushes, merges, rebases or forces: it only fetches, fast-forwards and switches to commits GitHub has."""
 from __future__ import annotations
 
@@ -151,9 +152,10 @@ def _working_parts(s: RepoState, running: bool) -> list[str]:
 
 def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running: bool,
               in_use: set[Path] | frozenset = frozenset(), uv_cmd: list[str] | None = None,
-              default_only: bool = False) -> RepoResult:
-    """default_only: a repo the daily tasks run from (and the launcher): it follows the other PC only on the default
-    branch, never onto a feature branch, so a daily run never starts on code that is not on main."""
+              default_only: bool = False, who: str | None = None) -> RepoResult:
+    """peer: the repo's state on the other PC last worked on in it (runner.leading_peer), named `who` (default: the
+    first other PC). default_only: a repo the daily tasks run from (and the launcher): it follows the other PC only
+    on the default branch, never onto a feature branch, so a daily run never starts on code that is not on main."""
     path = cfg.repo_path(repo)
     r = RepoResult(repo)
     if not (path / ".git").exists():
@@ -169,7 +171,7 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
         return r
     ff_other_branches(path, s.branch)
     notes: list[str] = []
-    who = cfg.peer
+    who = who or cfg.peers[0]
     if frozen:
         notes.append("kept for today's daily run on this PC")
     elif s.uncommitted or s.unpushed or s.operation or running:
@@ -177,7 +179,7 @@ def sync_code(cfg: Settings, repo: str, peer: dict | None, frozen: bool, running
         if not running:  # never any Git move under a running daily task
             _ff_current(path, repo, s, r)
         if peer and (peer.get("uncommitted") or peer.get("unpushed")):
-            notes.append("work in progress on both PCs")
+            notes.append(f"work in progress here and on the {who}")
     else:
         leads = bool(peer) and peer.get("last_activity", 0) > s.last_activity and peer.get("head") != s.head
         branch = peer.get("branch") if leads else None

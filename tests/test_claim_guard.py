@@ -151,7 +151,7 @@ class GitHubUnreachableTest(unittest.TestCase):
         self.record(day, "laptop")  # the other PC held it when last seen: not this PC's to assume
         err = r.start("sod")
         self.assertIn("could not check GitHub", err)
-        self.assertIn("Start without the claim only if the laptop is off", err)
+        self.assertIn("Start without the claim only if neither the laptop nor the vps is running", err)
         self.assertEqual(r.offers["sod"], "start_without_claim")
         self.assertNotIn("sod", r.runs)
 

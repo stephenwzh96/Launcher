@@ -1,7 +1,8 @@
-"""Before a daily task starts (the launcher, tasks.yaml `claim`): is this PC in step with GitHub and the other PC?
+"""Before a daily task starts (the launcher, tasks.yaml `claim`): is this PC in step with GitHub and the other PCs?
 Every check is local (Git's last fetch, the sync's own files): none needs the network. The launcher refuses the
 start when one fails and offers to start anyway (review of 18 Nov 2026, H1), or only warns (edited tracked files,
-the other PC's data not here yet); before a take-over it asks whether the other PC may still be running (H3)."""
+another PC's data not here yet); before a take-over it asks whether the PC holding the day may still be running
+(H3)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,12 +10,12 @@ from pathlib import Path
 from .code_sync import _is_ancestor, default_branch, pending_uv
 from .daily import _repo_of_path, busy_repos
 from . import NOTE_FORMAT
-from .data_files import hash_file, sqlite_open
-from .data_sync import load_state, pending_from_peer, read_alive, read_note
+from .data_files import sqlite_open
+from .data_sync import _staged, load_state, pending_from_peers, read_alive, read_note, read_peer_notes
 from .gitops import out, read_repo
-from .settings import LAUNCHER_REPO, Settings
+from .settings import ALWAYS_ON, LAUNCHER_REPO, Settings
 
-PEER_RECENT_S = 15 * 60  # the other PC's sync ran this recently: it is on
+PEER_RECENT_S = 15 * 60  # another PC's sync ran this recently: it is on
 PENDING_SHOWN = 5  # files named in the warning about the other PC's data not taken yet
 
 
@@ -85,17 +86,22 @@ def code_problems(cfg: Settings, repos: list[str]) -> list[str]:
 
 
 def _arrived(cfg: Settings, rel: str, p: dict) -> bool:
-    staged = cfg.peer_outbox / rel
+    return _staged(cfg, rel, p) is not None
+
+
+def _seen(cfg: Settings, machine: str, note: dict | None) -> float:
+    """When `machine`'s sync last ran (its note or its heartbeat), 0 when unknown."""
     try:
-        return staged.is_file() and hash_file(staged) == p["h"]
-    except OSError:
-        return False
+        return max(float((note or {}).get("written") or 0.0), float(read_alive(cfg, machine) or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _why_pending(cfg: Settings, rel: str, p: dict, state: dict, peer_seen: float, now: float,
                  held_here: bool) -> str:
-    """Why the other PC's version of rel is not here yet, and whether waiting for the next sync helps."""
-    peer = cfg.peer
+    """Why another PC's version of rel (made on p["m"], last seen at peer_seen) is not here yet, and whether
+    waiting for the next sync helps."""
+    peer = p["m"]
     if p["del"] and rel in set(state.get("held_deletions") or []):
         return "held deletion (needs --allow-deletes)"
     if rel in set(state.get("unstable") or []) or sqlite_open(cfg.home / rel):
@@ -109,24 +115,23 @@ def _why_pending(cfg: Settings, rel: str, p: dict, state: dict, peer_seen: float
 
 
 def data_pending(cfg: Settings, repos: set[str], now: float, held_here: bool = False) -> str | None:
-    """A warning when the other PC's note lists newer versions in `repos` that this PC has not taken yet (M7):
+    """A warning when another PC's note lists newer versions in `repos` that this PC has not taken yet (M7):
     the count and up to PENDING_SHOWN files, each with why (only "should arrive with the next sync" means waiting
     helps). Never a refusal."""
-    note = read_note(cfg, cfg.peer)
-    if not note or note.get("format", 0) > NOTE_FORMAT:
+    notes = {m: n for m, n in read_peer_notes(cfg).items() if n and n.get("format", 0) <= NOTE_FORMAT}
+    if not notes:
         return None
     state = load_state(cfg)
-    waiting = pending_from_peer(cfg, state, note, repos)
+    waiting = pending_from_peers(cfg, state, notes, repos)
     if not waiting:
         return None
-    try:
-        seen = max(float(note.get("written") or 0.0), float(read_alive(cfg, cfg.peer) or 0.0))
-    except (TypeError, ValueError):
-        seen = 0.0
-    named = [f"{rel} ({_why_pending(cfg, rel, p, state, seen, now, held_here)})" for rel, p in waiting[:PENDING_SHOWN]]
+    seen = {m: _seen(cfg, m, notes.get(m)) for m in cfg.peers}
+    named = [f"{rel} ({_why_pending(cfg, rel, p, state, seen.get(p['m'], 0.0), now, held_here)})"
+             for rel, p in waiting[:PENDING_SHOWN]]
     more = f"; and {len(waiting) - PENDING_SHOWN} more" if len(waiting) > PENDING_SHOWN else ""
-    return (f"the {cfg.peer}'s newer data is not here yet ({_plural(len(waiting), 'file')}): " + "; ".join(named)
-            + more)
+    makers = sorted({p["m"] for _, p in waiting})
+    whose = f"the {makers[0]}'s" if len(makers) == 1 else "the other PCs'"
+    return f"{whose} newer data is not here yet ({_plural(len(waiting), 'file')}): " + "; ".join(named) + more
 
 
 def libraries_pending(cfg: Settings, repos: list[str]) -> list[str]:
@@ -152,15 +157,30 @@ def code_record(cfg: Settings, repos: list[str]) -> list[str]:
     return lines
 
 
-def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None) -> list[str]:
-    """Why the other PC may still be running today's daily run, from what its sync last wrote (its note and
-    heartbeat): a daily task running there (the note's `running_tasks`; from an older tool, any repo marked
-    running), or a sync run within PEER_RECENT_S (it is on). Empty when neither, or it never wrote a note."""
-    note = read_note(cfg, cfg.peer) or {}
-    try:
-        beat = max(float(note.get("written") or 0.0), float(read_alive(cfg, cfg.peer) or 0.0))
-    except (TypeError, ValueError):
-        beat = 0.0
+def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None, machine: str | None = None,
+              claim: tuple[str, str] | None = None) -> list[str]:
+    """Why `machine` (the PC holding the day; every other PC when None or not a known PC) may still be running
+    today's daily run, from what its sync last wrote (its note and heartbeat): a daily task running there (the
+    note's `running_tasks`; from an older tool, any repo marked running), or a sync run within PEER_RECENT_S (it is
+    on). An always-on PC (settings.ALWAYS_ON, the VPS) syncs every few minutes whether or not it runs anything, so
+    for it only a daily task reported running counts (review of the three-machines branch, 21 Nov 2026: otherwise
+    every take-over from the VPS would need "take over anyway"). `claim` (name, day): the day `machine` holds; an
+    always-on PC whose last note does not list that claim yet synced before it took the day, so its "nothing running"
+    is from before the run could start (an automatic start at 09:30 between two syncs), and it counts as busy until
+    its next sync. The note's own claims list needs no clock comparison between the PCs. Empty when neither, or it
+    never wrote a note. Each line names the PC when more than one is checked."""
+    if machine in cfg.peers:
+        return _busy(cfg, machine, now, labels, claim)
+    found = []
+    for other in cfg.peers:
+        found += [f"the {other}: {line}" for line in _busy(cfg, other, now, labels)]
+    return found
+
+
+def _busy(cfg: Settings, machine: str, now: float, labels: dict[str, str] | None,
+          claim: tuple[str, str] | None = None) -> list[str]:
+    note = read_note(cfg, machine) or {}
+    beat = _seen(cfg, machine, note)
     if not beat:
         return []
     found = []
@@ -171,6 +191,12 @@ def peer_busy(cfg: Settings, now: float, labels: dict[str, str] | None = None) -
     if running:
         found.append(f"its last sync ({_ago(now - beat)}) reported a daily task running there "
                      f"({', '.join(running)})")
-    if now - beat < PEER_RECENT_S:
+    if now - beat < PEER_RECENT_S and machine not in ALWAYS_ON:
         found.append(f"its sync ran {_ago(now - beat)}, so it is on")
+    if machine in ALWAYS_ON and claim and not running and isinstance(note.get("claims"), list):
+        name, day = claim
+        if not any(isinstance(c, dict) and c.get("claim") == name and c.get("day") == day
+                   and c.get("holder") == machine for c in note["claims"]):
+            found.append(f"its last sync ({_ago(now - beat)}) came before it took {day}, so whether it is running "
+                         "is not known until its next sync (every few minutes)")
     return found

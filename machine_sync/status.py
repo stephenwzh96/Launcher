@@ -5,8 +5,8 @@ import json
 from datetime import datetime
 
 from .code_sync import RepoResult
-from .data_sync import ImportResult
-from .settings import Settings
+from .data_sync import ImportResult, forgotten, peers_seen
+from .settings import FORGET_AFTER_DAYS, Settings
 
 PEER_QUIET_MIN = 30
 LOG_MAX_BYTES = 2_000_000
@@ -14,20 +14,38 @@ LOG_MAX_BYTES = 2_000_000
 
 def _clash_line(c: dict, where: str) -> str:
     backup = f"; {where}'s copy kept at {c['backup']}" if c.get("backup") else ""
-    return f"  changed on both PCs: {c['path']} ({c['kept']}'s version kept{backup})"
+    return f"  changed on two PCs: {c['path']} ({c['kept']}'s version kept{backup})"
+
+
+def _peer_line(machine: str, note: dict | None, seen_at: float | None, now: datetime, state: dict) -> str:
+    if note:
+        seen = datetime.fromtimestamp(max(seen_at or 0, note.get("written", 0)))
+        age = (now - seen).total_seconds() / 60
+        quiet = f", {age / 60:.1f} h ago: off or offline?" if age > PEER_QUIET_MIN else ""
+        return f"{machine} last ran {seen:%d %b %H:%M}{quiet}"
+    last = peers_seen(state).get(machine)
+    if last is None:
+        return f"{machine} not in the sync yet"
+    days = (now.timestamp() - last) / 86400 if last else 0.0
+    if forgotten(state, machine, now.timestamp()):
+        return (f"no note from {machine} for {days:.0f} days: no longer waited for (it joins again with its next "
+                "note)")
+    since = f" for {days:.1f} days" if days >= 1 else ""
+    return f"no note from {machine} now{since}: is Syncthing connected? (forgotten after {FORGET_AFTER_DAYS} days)"
 
 
 def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportResult, state: dict,
-           peer_note: dict | None, warnings: list[str], claims: list[dict], peer_seen: float | None = None) -> str:
-    peer = cfg.peer
-    head = f"Sync status on {cfg.machine}, {now:%d %b %H:%M}"
-    if peer_note:
-        seen = datetime.fromtimestamp(max(peer_seen or 0, peer_note.get("written", 0)))
-        age = (now - seen).total_seconds() / 60
-        quiet = f", {age / 60:.1f} h ago: off or offline?" if age > PEER_QUIET_MIN else ""
-        head += f" ({peer} last ran {seen:%d %b %H:%M}{quiet})"
+           peer_notes: dict[str, dict | None] | None, warnings: list[str], claims: list[dict],
+           peer_seen: dict[str, float | None] | None = None) -> str:
+    """peer_notes: every other PC's note (None: none, or not readable); peer_seen: each one's last heartbeat."""
+    notes = {m: (peer_notes or {}).get(m) for m in cfg.peers}
+    if not peers_seen(state) and not any(notes.values()):
+        others = " or ".join(cfg.peers)
+        head_tail = f" (no note from the {others} yet: is the sync installed there and Syncthing connected?)"
     else:
-        head += f" (no note from {peer} yet: is the sync installed there and Syncthing connected?)"
+        head_tail = " (" + "; ".join(_peer_line(m, notes[m], (peer_seen or {}).get(m), now, state)
+                                     for m in cfg.peers) + ")"
+    head = f"Sync status on {cfg.machine}, {now:%d %b %H:%M}{head_tail}"
     lines = [head]
     today = [c for c in claims if c["day"] == now.strftime("%Y-%m-%d")]
     lines.append("Today's daily run: " + (", ".join(
@@ -41,16 +59,18 @@ def render(cfg: Settings, now: datetime, results: list[RepoResult], res: ImportR
     acts = [f"{word} {n}" for word, n in (("took", res.taken), ("deleted", res.deleted), ("sent", res.exported),
                                          ("waiting for", res.waiting)) if n]
     lines.append(f"  {live:,} data files; " + ("this run: " + ", ".join(acts) if acts else "nothing to move"))
+    source = " and ".join(res.held_from) or "the other PCs"
     if res.held_deletes and res.held_today is not None:
-        lines.append(f"  {res.held_deletes} deletions from {peer} held back: with the {res.held_today} already taken "
-                     f"today they pass the day's limit of {res.day_limit}: check them, then run the sync with "
+        lines.append(f"  {res.held_deletes} deletions from {source} held back: with the {res.held_today} already "
+                     f"taken today they pass the day's limit of {res.day_limit}: check them, then run the sync with "
                      "--allow-deletes")
     elif res.held_deletes:
-        lines.append(f"  {res.held_deletes} deletions from {peer} held back (more than usual): check them, then run "
+        lines.append(f"  {res.held_deletes} deletions from {source} held back (more than usual): check them, then run "
                      "the sync with --allow-deletes")
     day_ago = now.timestamp() - 86400
     lines += [_clash_line(c, cfg.machine) for c in state["clashes"] if c["when"] > day_ago]
-    lines += [_clash_line(c, peer) for c in (peer_note or {}).get("clashes", []) if c.get("when", 0) > day_ago]
+    for machine, note in notes.items():
+        lines += [_clash_line(c, machine) for c in (note or {}).get("clashes", []) if c.get("when", 0) > day_ago]
     lines += [f"  not taken: {s}" for s in res.skipped[:5]]
     if len(res.skipped) > 5:
         lines.append(f"  not taken: {len(res.skipped) - 5} more")

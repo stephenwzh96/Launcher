@@ -21,8 +21,9 @@ def selftest() -> int:
 
 
 def _dry_run() -> None:
-    """Two made-up PCs in a temporary folder (no network, no Git, no real path): a file made on the laptop reaches
-    the desktop; then the rules the runs rely on, one example each. Raises when one is wrong."""
+    """Three made-up PCs in a temporary folder (no network, no Git, no real path): a file made on the laptop reaches
+    the desktop and the VPS, and only the laptop stages it; then the rules the runs rely on, one example each.
+    Raises when one is wrong."""
     import os
     import shutil
     import tempfile
@@ -31,26 +32,32 @@ def _dry_run() -> None:
 
     from .daily import running_tasks
     from .data_files import skipped
-    from .data_sync import _newer, load_state, read_note, sync_data
+    from .data_sync import _newer, load_state, read_peer_notes, sync_data
     from .procs import Proc
 
     # a file still held for a moment (antivirus, the search indexer) must not fail the self-test, so the update
     with tempfile.TemporaryDirectory(prefix="msync-selftest-", ignore_cleanup_errors=True) as tmp:
-        desk, lap = (Settings(home=Path(tmp) / m, machine=m, repos=(), plain_roots={"Data": []}) for m in MACHINES)
-        made = lap.home / "Data" / "a.csv"
+        pcs = {m: Settings(home=Path(tmp) / m, machine=m, repos=(), plain_roots={"Data": []}) for m in MACHINES}
+        made = pcs["laptop"].home / "Data" / "a.csv"
         made.parent.mkdir(parents=True)
         made.write_text("1")
         now = time.time() + 1000
         os.utime(made, (now - 600, now - 600))
-        for cfg, other in ((desk, lap), (lap, desk), (desk, lap), (lap, desk)):
-            now += 61
-            sync_data(cfg, load_state(cfg), read_note(cfg, cfg.peer), now)
-            mirror = other.home / cfg.own_outbox.name  # Syncthing: this PC's outbox, as the other PC sees it
-            shutil.rmtree(mirror, ignore_errors=True)
-            shutil.copytree(cfg.own_outbox, mirror)
-        arrived = desk.home / "Data" / "a.csv"
-        if not arrived.is_file() or arrived.read_text() != "1":
-            raise AssertionError("selftest: a new file did not reach the other PC")
+        for _ in range(2):
+            for cfg in pcs.values():
+                now += 61
+                sync_data(cfg, load_state(cfg), read_peer_notes(cfg), now)
+                for other in pcs.values():  # Syncthing: this PC's outbox, as every other PC sees it
+                    if other is not cfg:
+                        mirror = other.home / cfg.own_outbox.name
+                        shutil.rmtree(mirror, ignore_errors=True)
+                        shutil.copytree(cfg.own_outbox, mirror)
+        for m in ("desktop", "vps"):
+            arrived = pcs[m].home / "Data" / "a.csv"
+            if not arrived.is_file() or arrived.read_text() != "1":
+                raise AssertionError(f"selftest: a new file did not reach the {m}")
+            if (pcs[m].own_outbox / "Data" / "a.csv").exists():
+                raise AssertionError(f"selftest: the {m} staged a file it did not make")
     made_from = {"t": 100.0, "m": "laptop", "vv": {"laptop": 100.0}}
     later = {"t": 50.0, "m": "desktop", "vv": {"laptop": 100.0, "desktop": 50.0}}  # made from it, on a slower clock
     if not _newer(later, made_from) or _newer(made_from, later):
@@ -75,8 +82,9 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--update-frozen", action="store_true", help="update code kept for today's daily run")
     sub.add_parser("status", help="print the last status")
     sub.add_parser("selftest")
-    adopt = sub.add_parser("adopt-deletions", help="one-off: delete here (to backup) the shared files the other PC "
-                                                   "deleted before this tool existed; dry run without --apply")
+    adopt = sub.add_parser("adopt-deletions", help="one-off (desktop and laptop): delete here (to backup) the shared "
+                                                   "files the other PC deleted before this tool existed; dry run "
+                                                   "without --apply")
     adopt.add_argument("--apply", action="store_true")
     ins = sub.add_parser("install", help="install on this PC and register the task")
     ins.add_argument("--machine", required=True, choices=MACHINES)
@@ -98,15 +106,20 @@ def main(argv: list[str] | None = None) -> int:
         from . import runlock
         from .data_sync import adopt_peer_deletions, load_state, read_note, trip_baseline
 
-        peer_note = read_note(cfg, cfg.peer)
+        if cfg.machine not in ("desktop", "laptop"):
+            _say("adopt-deletions is the trip's one-off between the desktop and the laptop: nothing to do here")
+            return 1
+        peer = "laptop" if cfg.machine == "desktop" else "desktop"
+        peer_note = read_note(cfg, peer)
         if peer_note is None:
-            _say(f"no note from the {cfg.peer} yet: nothing to compare")
+            _say(f"no note from the {peer} yet: nothing to compare")
             return 1
         if not runlock.acquire(cfg.sync_dir, wait_s=120):
             _say("a sync run is in progress; try again in a minute")
             return 1
         try:
-            paths = adopt_peer_deletions(cfg, load_state(cfg), peer_note, trip_baseline(cfg), time.time(), a.apply)
+            paths = adopt_peer_deletions(cfg, load_state(cfg), peer, peer_note, trip_baseline(cfg), time.time(),
+                                         a.apply)
         finally:
             runlock.release(cfg.sync_dir)
         for folder, n in Counter("/".join(p.split("/")[:4]) for p in paths).most_common():

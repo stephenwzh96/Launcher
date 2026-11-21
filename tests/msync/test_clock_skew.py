@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from machine_sync.data_sync import clock_skew, load_state, read_alive, read_note, sync_data
+from machine_sync.data_sync import clock_skew, load_state, read_alive, read_note, read_peer_notes, sync_data
 from msync.helpers import TempDirCase, syncthing, two_pcs
 
 AHEAD_S = 600  # the laptop's clock is 10 minutes ahead of the desktop's
@@ -36,7 +36,7 @@ class SkewedClocksTest(TempDirCase):
 
     def pc_run(self, cfg):
         self.tick()
-        return sync_data(cfg, load_state(cfg), read_note(cfg, cfg.peer), self.clock(cfg))
+        return sync_data(cfg, load_state(cfg), read_peer_notes(cfg), self.clock(cfg))
 
     def exchange(self) -> None:
         syncthing(self.desk, self.lap)
@@ -116,14 +116,14 @@ class SkewedClocksTest(TempDirCase):
         self.write(self.lap, "data/s.csv", "x")
         self.cycle(self.lap, self.desk)
         state, note = load_state(self.desk), read_note(self.desk, "laptop")
-        said = clock_skew(self.desk, state, note, read_alive(self.desk, "laptop"), self.clock(self.desk))
+        said = clock_skew(self.desk, state, "laptop", note, read_alive(self.desk, "laptop"), self.clock(self.desk))
         self.assertRegex(said, r"laptop's clock is about (9|10) min ahead")
-        self.assertIsNone(clock_skew(self.lap, load_state(self.lap), read_note(self.lap, "desktop"),
+        self.assertIsNone(clock_skew(self.lap, load_state(self.lap), "desktop", read_note(self.lap, "desktop"),
                                      read_alive(self.lap, "desktop"), self.clock(self.lap)))
-        self.assertIsNone(clock_skew(self.desk, state, note, None, self.clock(self.desk) + AHEAD_S))
+        self.assertIsNone(clock_skew(self.desk, state, "laptop", note, None, self.clock(self.desk) + AHEAD_S))
 
     def test_skew_warning_from_heartbeat_alone(self) -> None:
         now = time.time()
         state = {"files": {}}
-        self.assertIsNone(clock_skew(self.desk, state, {"written": now + 25, "files": {}}, None, now))
-        self.assertIn("about 45 s ahead", clock_skew(self.desk, state, {"written": now, "files": {}}, now + 45, now))
+        self.assertIsNone(clock_skew(self.desk, state, "laptop", {"written": now + 25, "files": {}}, None, now))
+        self.assertIn("about 45 s ahead", clock_skew(self.desk, state, "laptop", {"written": now, "files": {}}, now + 45, now))

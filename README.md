@@ -164,7 +164,9 @@ Add a task to [`tasks.yaml`](tasks.yaml); nothing else changes:
 - `app.py` — thin FastAPI layer: `/api/apps`, `/api/status`,
   `/api/start/{id}`, `/api/stop/{id}`; `/api/tasks`, `/api/tasks/run-all`,
   `/api/tasks/{id}/start|stop|log|preview`; `/api/tasks` also lists the
-  reminders due. Serves `static/index.html` at `/`.
+  reminders due and whose day it is; `/api/day/reserve[?day=YYYY-MM-DD]` is "Run today here" (or a later day).
+  Serves `static/index.html` at `/`. On the PC a task's `auto` names (tasks.yaml), once `MachineSync\auto_start.on`
+  exists there, it starts that task by itself when due (`task_runner.auto_tick`, every minute).
 - `static/index.html` — fetches `/api/apps` once to build the cards, then
   polls `/api/status` every 3s. No app-specific code in here.
 
@@ -172,10 +174,14 @@ Stopping looks up *whatever process is currently listening on the configured
 port* rather than remembering what it started — so Stop still works even if
 you started something manually, or the launcher itself restarted.
 
-## Machine sync (desktop and laptop)
+## Machine sync (desktop, laptop and VPS)
 
-`machine_sync/` keeps the desktop and the laptop on the same code and data, both ways, so work can continue on
-either PC. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md`.
+`machine_sync/` keeps the desktop, the laptop and the VPS on the same code and data, so work and the daily run can
+continue on any of them. Design: `docs/superpowers/specs/2026-11-17-two-way-machine-sync-design.md` (two PCs) and
+`docs/superpowers/specs/2026-11-20-three-machine-design.md` (the VPS as the third, and the default holder of the
+day). Each PC has one outbox (laptop `TripSync`, desktop `DesktopSync`, VPS `VpsSync`), shared with the other two:
+an outbox holds that PC's own changes until every other PC has them (and another PC's versions once that PC has been
+quiet for 6 hours). A PC that has never written a note (the VPS, until it is installed) is not waited for.
 
 - **What it does, every 5 minutes and at logon, unlock and wake** (Task Scheduler task "Machine sync"):
   - code: fetches the 8 repos, fast-forwards every branch, and follows the branch and commit of the PC last worked on
@@ -200,9 +206,10 @@ $py = "C:\Users\User\AppData\Local\Programs\Python\Python312\python.exe"
 & $py -I C:\Users\User\MachineSync\tool\run_sync.py status
 ```
 
-- **Install on a PC** (from this folder): `& $py -m machine_sync install --machine desktop` (or `laptop`). The
-  installed copy updates itself from this repo's `origin/main` after passing a self-test (every module imports, and
-  a dry run on two made-up PCs in a temporary folder gives the right answers). It does not update while a daily task
+- **Install on a PC** (from this folder): `& $py -m machine_sync install --machine desktop` (or `laptop`, or
+  `vps`; on the VPS the user folder is `C:\Users\Administrator`). The installed copy updates itself from this repo's
+  `origin/main` after passing a self-test (every module imports, and a dry run on three made-up PCs in a temporary
+  folder gives the right answers). It does not update while a daily task
   runs on that PC (started from the launcher or a terminal); the status says an update waits.
 - **Roll back an update:** the copy it replaced stays in `C:\Users\User\MachineSync\tool.old` until the next update.
   1. Create `C:\Users\User\MachineSync\hold_update.txt` (any content): no update is installed while it exists, so

@@ -80,7 +80,7 @@ class RunnerTest(TempDirCase):
         self.assertIn("still going", self.run_pc(self.desk))
 
     def test_no_note_from_peer_said(self) -> None:
-        self.assertIn("no note from laptop yet", self.run_pc(self.desk))
+        self.assertIn("no note from the laptop or vps yet", self.run_pc(self.desk))
 
     def test_log_records_changes_not_repeats(self) -> None:
         commit(self.lt, "u.txt", "unpushed")
