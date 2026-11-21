@@ -159,7 +159,7 @@ Each part is reused or built as follows:
 | Python | standalone 3.12.10 | standalone 3.12.10 | uv 3.12.10 |
 | Node | yes | yes | **no** |
 | Paper Gateway, PostgreSQL | no (uses the VPS's) | no (uses the VPS's) | yes |
-| Norgate | yes | yes, until its seat moves to the VPS (below, 5.5) | **no**: gets the laptop's seat |
+| Norgate | yes | yes | **no** |
 | CPU / RAM | fast / ample | laptop | 4 vCPU EPYC (about 3.6x slower per thread than the desktop) / **8 GB, 2.3 GB free now** |
 | Disk free | | | 61 GB of 100 GB |
 | Always on | no | no (trips) | yes: autologon; Windows Update never restarts it |
@@ -346,9 +346,9 @@ nothing trades until Stephen approves the list.
 
 | Situation | What to do |
 |---|---|
-| Stephen wants the desktop or the laptop for a day | Press "Run today here" before 09:30 (or the day before). The PC connects to the VPS's Gateway and database, as today: `IBKR_TARGET=vps`, client ids 10-19 or 20-29. Once the laptop's Norgate seat has moved to the VPS (below), only the desktop: Start of Day cannot pass its readiness gate without Norgate, and the cycle runs on the machine that ran Start of Day (IBKR runbook, the ingest marker), so the laptop holds no day |
+| Stephen wants the desktop or the laptop for a day | Press "Run today here" before 09:30 (or the day before). The PC connects to the VPS's Gateway and database, as today: `IBKR_TARGET=vps`, client ids 10-19 or 20-29 |
 | The VPS's Start of Day has started but Stephen wants to switch | Stop it on the VPS's launcher, then take over on the PC. The fence refuses while the VPS's last sync (every 5 minutes) reports a daily task running, or came before the VPS took the day; a recent sync alone does not count for the always-on VPS. "Force take-over" is for a VPS that is up but stuck |
-| The VPS is down in the morning | Start Start of Day by hand on the desktop (or the laptop while it still has a Norgate seat): the claim is taken over once the VPS has been silent for 15 minutes. The envelopes are made. **The cycle cannot run until the VPS is back, because the database and the Gateway live there.** If it is back before 16:10, the PC that holds the day makes the presses against it. With the desktop down too, no envelopes are made: the day HOLDs and IBKR keeps yesterday's positions |
+| The VPS is down in the morning | Start Start of Day by hand on the desktop or the laptop: the claim is taken over once the VPS has been silent for 15 minutes. The envelopes are made. **The cycle cannot run until the VPS is back, because the database and the Gateway live there.** If it is back before 16:10, the PC that holds the day makes the presses against it |
 | The VPS dies overnight | The outside dead-man alerts. When the VPS is back (autologon, then the Gateway logon task), the resume task restarts `run`, which resumes the cycle. Missed windows are not traded, and the reconcile reports them |
 | The VPS is lost (rebuild) | Contabo snapshot, or a new VPS from the runbook. The database comes from the latest `trading_vps_*.dump`, which every machine now holds through the data sync |
 
@@ -473,7 +473,7 @@ or the laptop, run by hand, until phase 7.
 | The VPS is a single point for the database, the Gateway and now the day | Already true for the database and the Gateway. Mitigations: the outside dead-man; the resume task; the database dumps on all three machines; the Contabo snapshot; Start of Day can run on a PC |
 | Memory pressure slows Start of Day or pages the Gateway out | 16 GB; trial pass mark; close the apps on run days until upgraded |
 | Late data plus a slower CPU means HOLD | Accepted in D65; the trial measures it; a PC can take a day by hand |
-| Norgate does not allow a third machine, or does not run on Windows Server | It does not: on 21 Nov 2026 Norgate refused the VPS ("the maximum number of concurrent installations allowed"). Stephen moves the laptop's seat to the VPS ("Yes, free laptop's", in the VPS chat, 21 Nov 2026): Start of Day runs on the VPS or the desktop, and the laptop holds no day. Releasing the seat (the laptop's Updater, Norgate support or his account page) and disabling the laptop's at-logon Updater entry are Stephen's |
+| Norgate does not allow a third machine, or does not run on Windows Server | Stephen checks first. If not, the VPS still runs the night: Start of Day stays on a PC with a separate day claim, which is a later design |
 | Syncthing relay does not behave as expected | Phase 3 test. Fallback: an outbox also stages imported files for a peer that has been silent for over 24 h |
 | Two machines both start a day | GitHub claim, then the database run lock; the take-over fence checks the claim holder |
 | Clock skew between machines | Version vectors; Machine sync warns at 30 s; all three sync to time servers (the VPS uses time.windows.com) |
