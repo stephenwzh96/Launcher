@@ -159,7 +159,7 @@ Each part is reused or built as follows:
 | Python | standalone 3.12.10 | standalone 3.12.10 | uv 3.12.10 |
 | Node | yes | yes | **no** |
 | Paper Gateway, PostgreSQL | no (uses the VPS's) | no (uses the VPS's) | yes |
-| Norgate | yes | yes | **no** |
+| Norgate | yes | yes | **no**: a third installation bought 21 Nov 2026; sign-in and first download pending |
 | CPU / RAM | fast / ample | laptop | 4 vCPU EPYC (about 3.6x slower per thread than the desktop) / **8 GB, 2.3 GB free now** |
 | Disk free | | | 61 GB of 100 GB |
 | Always on | no | no (trips) | yes: autologon; Windows Update never restarts it |
@@ -473,7 +473,7 @@ or the laptop, run by hand, until phase 7.
 | The VPS is a single point for the database, the Gateway and now the day | Already true for the database and the Gateway. Mitigations: the outside dead-man; the resume task; the database dumps on all three machines; the Contabo snapshot; Start of Day can run on a PC |
 | Memory pressure slows Start of Day or pages the Gateway out | 16 GB; trial pass mark; close the apps on run days until upgraded |
 | Late data plus a slower CPU means HOLD | Accepted in D65; the trial measures it; a PC can take a day by hand |
-| Norgate does not allow a third machine, or does not run on Windows Server | Stephen checks first. If not, the VPS still runs the night: Start of Day stays on a PC with a separate day claim, which is a later design |
+| Norgate does not allow a third machine, or does not run on Windows Server | Resolved 21 Nov 2026: Norgate refused the VPS at the two-installation limit, and Stephen bought a third ("i just paid for one more installation so 3 in total"). All three machines keep a seat. Start of Day on the VPS waits for its sign-in and first download (phase 4) |
 | Syncthing relay does not behave as expected | Phase 3 test. Fallback: an outbox also stages imported files for a peer that has been silent for over 24 h |
 | Two machines both start a day | GitHub claim, then the database run lock; the take-over fence checks the claim holder |
 | Clock skew between machines | Version vectors; Machine sync warns at 30 s; all three sync to time servers (the VPS uses time.windows.com) |
