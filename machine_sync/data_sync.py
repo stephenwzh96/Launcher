@@ -1,9 +1,12 @@
-"""Two-way data (design, "Data step"): each PC records a version per data file (content hash, change stamp, the stamp
-it replaced, deleted or not), publishes all of them in its note, keeps in its outbox only the files the other PC
-lacks and that are newer here, and takes the other PC's newer versions. Newer is decided by each version's history
-(its version vector), not by comparing the two PCs' clocks; only changes made on both PCs independently fall back
-to the later stamp. The same rule runs on both PCs; a file this PC had changed is backed up before it is replaced
-or deleted."""
+"""Data between the PCs (design, "Data step"; three machines, 20 Nov 2026): each PC records a version per data file
+(content hash, change stamp, version vector, deleted or not), publishes all of them in its note, keeps in its outbox
+only its own changes that some other PC lacks, and takes the newest version any other PC lists, from whichever
+outbox holds that content. Newer is decided by each version's history (its version vector), not by comparing the
+PCs' clocks; only changes made on two PCs independently fall back to the later stamp. The same rule runs on every PC;
+a file this PC had changed is backed up before it is replaced or deleted.
+Every outbox is shared with every PC, so Syncthing passes a PC's outbox on through any PC that holds a copy: the
+always-on VPS relays between the desktop and the laptop when they are not on at the same time. A PC that has never
+written a note has not joined: nobody waits for it or stages files for it (joined_peers)."""
 from __future__ import annotations
 
 import json
@@ -16,8 +19,8 @@ from pathlib import Path
 from . import NOTE_FORMAT
 from .data_files import data_files, hash_file, is_sqlite, skipped, sqlite_open
 from .gitops import git
-from .settings import (BACKUP_DAYS, BRAKE_DAY_FRACTION, BRAKE_DAY_MIN, BRAKE_FRACTION, BRAKE_MIN, STABLE_S,
-                       TOMBSTONE_DAYS, TOMBSTONE_MAX_DAYS, Settings)
+from .settings import (BACKUP_DAYS, BRAKE_DAY_FRACTION, BRAKE_DAY_MIN, BRAKE_FRACTION, BRAKE_MIN, MACHINES,
+                       RELAY_AFTER_H, STABLE_S, TOMBSTONE_DAYS, TOMBSTONE_MAX_DAYS, Settings)
 
 OUTBOX_OWN = {"_state", "_tools", ".stfolder", ".stignore", ".stversions"}  # never data, never removed
 CLASH_KEEP_DAYS = 7
@@ -31,6 +34,7 @@ class ImportResult:
     skipped: list[str] = field(default_factory=list)
     clashes: list[str] = field(default_factory=list)
     held_deletes: int = 0
+    held_from: list[str] = field(default_factory=list)  # the PCs that made the held deletions
     exported: int = 0
     # set when the day's brake (not the run's) held them: deletions already taken today, and the day's limit
     held_today: int | None = None
@@ -71,6 +75,21 @@ def read_note(cfg: Settings, machine: str) -> dict | None:
         return None
 
 
+def read_peer_notes(cfg: Settings) -> dict[str, dict | None]:
+    """Every other PC's note (None: none yet, or unreadable), in MACHINES order."""
+    return {m: read_note(cfg, m) for m in cfg.peers}
+
+
+def joined_peers(state: dict, peer_notes: dict[str, dict | None]) -> tuple[dict[str, dict], list[str]]:
+    """(the other PCs whose note this run can read, the other PCs that wrote a note before but cannot be read now: a
+    newer tool, or the note missing). A PC never seen and with no note has not joined the sync yet: it is neither
+    waited for nor staged for."""
+    seen = set(state.get("peers_seen") or [])
+    readable = {m: n for m, n in peer_notes.items() if n is not None}
+    unknown = sorted(m for m, n in peer_notes.items() if n is None and m in seen)
+    return readable, unknown
+
+
 def make_note(cfg: Settings, state: dict, now: float, extra: dict | None = None) -> dict:
     files = {rel: [e["h"], e["t"], e["m"], e["vv"], e["del"]] for rel, e in state["files"].items()}
     return {"format": NOTE_FORMAT, "machine": cfg.machine, "written": now, "files": files,
@@ -96,13 +115,13 @@ def read_alive(cfg: Settings, machine: str) -> float | None:
 SKEW_WARN_S = 30
 
 
-def clock_skew(cfg: Settings, state: dict, peer_note: dict | None, peer_alive: float | None,
+def clock_skew(cfg: Settings, state: dict, peer: str, peer_note: dict | None, peer_alive: float | None,
                now: float) -> str | None:
-    """A warning when the other PC's clock looks more than SKEW_WARN_S ahead of this one (or this one behind): its
-    last run (the note's `written`, its heartbeat) or the newest change of its this PC has seen is stamped in this
-    PC's future. Data decisions follow each file's history, so they stay right; the warning is for the rest (ties
-    between changes made on both PCs, and the code step's "PC last worked on", which compares the two clocks)."""
-    peer, newest = cfg.peer, float(peer_alive or 0.0)
+    """A warning when `peer`'s clock looks more than SKEW_WARN_S ahead of this one (or this one behind): its last
+    run (the note's `written`, its heartbeat) or the newest change of its this PC has seen is stamped in this PC's
+    future. Data decisions follow each file's history, so they stay right; the warning is for the rest (ties between
+    changes made on two PCs, and the code step's "PC last worked on", which compares the clocks)."""
+    newest = float(peer_alive or 0.0)
     if peer_note:
         newest = max(newest, float(peer_note.get("written") or 0.0))
         for raw in (peer_note.get("files") or {}).values():
@@ -117,7 +136,7 @@ def clock_skew(cfg: Settings, state: dict, peer_note: dict | None, peer_alive: f
         return None
     size = f"{ahead:.0f} s" if ahead < 120 else f"{ahead / 60:.0f} min"
     return (f"clock: the {peer}'s clock is about {size} ahead of this PC's (or this PC's is behind): set both to "
-            "internet time (Settings > Time > Sync now); the code step's \"PC last worked on\" compares the two clocks")
+            "internet time (Settings > Time > Sync now); the code step's \"PC last worked on\" compares the clocks")
 
 
 def _same_note(a: dict | None, b: dict) -> bool:
@@ -167,8 +186,8 @@ def _merge(a: dict, b: dict) -> dict:
 
 
 def _managed_folders(cfg: Settings) -> list[Path]:
-    """This PC's own Syncthing folders, except the two outboxes this tool uses."""
-    own = {cfg.own_outbox.resolve(), cfg.peer_outbox.resolve()}
+    """This PC's own Syncthing folders, except the outboxes this tool uses."""
+    own = {box.resolve() for box in cfg.outboxes()}
     return [Path(f).resolve() for f in cfg.syncthing_folders if Path(f).resolve() not in own]
 
 
@@ -201,27 +220,29 @@ def _root_of(cfg: Settings, rel: str) -> Path | None:
 
 
 # ----------------------------------------------------------------- scan this PC
-def _tombstone_done(e: dict, peer_raw, now: float) -> bool:
-    """A deletion can leave the note: TOMBSTONE_DAYS old and the other PC's note shows the path deleted too, or
-    TOMBSTONE_MAX_DAYS old. Dropped any sooner, a PC that was off for weeks would bring the file back."""
+def _tombstone_done(e: dict, peer_raws: list, now: float) -> bool:
+    """A deletion can leave the note: TOMBSTONE_DAYS old and every other PC that has joined shows the path deleted
+    too (None: a PC whose note cannot be read now, which never counts as shown), or TOMBSTONE_MAX_DAYS old. Dropped
+    any sooner, a PC that was off for weeks would bring the file back."""
     age = now - e["t"]
     if age > TOMBSTONE_MAX_DAYS * 86400:
         return True
-    if age <= TOMBSTONE_DAYS * 86400 or peer_raw is None:
+    if age <= TOMBSTONE_DAYS * 86400 or not peer_raws or any(raw is None for raw in peer_raws):
         return False
     try:
-        return _version(peer_raw)["del"]
+        return all(_version(raw)["del"] for raw in peer_raws)
     except (IndexError, TypeError):
         return False
 
 
 def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozenset(),
-         peer_note: dict | None = None) -> dict:
+         peer_notes: dict[str, dict | None] | None = None) -> dict:
     """Record this PC's changes. A file still being written (changed in the last STABLE_S seconds) or unreadable is
     left for a later run. A file is deleted only when it has been missing on two runs at least STABLE_S apart (a
     job rewriting its output folder is not a deletion), and never in a repo a daily task is using right now."""
     files = data_files(cfg)
-    peer_files = (peer_note or {}).get("files") or {}
+    readable, unknown = joined_peers(state, peer_notes or {})
+    peer_files = [(n.get("files") or {}) for n in readable.values()]
     entries, unstable, errors, missing = state["files"], [], [], state["missing"]
     for rel, path in files.items():
         missing.pop(rel, None)
@@ -251,7 +272,7 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
             missing.pop(rel, None)
             continue
         if e["del"]:
-            if _tombstone_done(e, peer_files.get(rel), now):
+            if _tombstone_done(e, [f.get(rel) for f in peer_files] + [None] * len(unknown), now):
                 del entries[rel]
             continue
         if rel in files:
@@ -275,7 +296,7 @@ def scan(cfg: Settings, state: dict, now: float, frozen_repos: set[str] = frozen
     return state
 
 
-# ----------------------------------------------------------------- import from the other PC
+# ----------------------------------------------------------------- import from the other PCs
 def _ignored_here(cfg: Settings, rels: list[str]) -> set[str]:
     """The repo paths among rels that this PC's Git ignores (the only ones the sync may write)."""
     allowed: set[str] = set()
@@ -348,36 +369,79 @@ def _changed_since_scan(cfg: Settings, rel: str, e: dict | None) -> bool:
     return e is None or e["del"] or st.st_size != e["size"] or st.st_mtime_ns != e["mt"]
 
 
-def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_repos: set[str],
-                     allow_deletes: bool, now: float) -> ImportResult:
+def _peer_versions(peer_notes: dict[str, dict | None]) -> dict[str, list[dict]]:
+    """Per path, the version each readable note lists (in MACHINES order); entries that cannot be read are left out."""
+    found: dict[str, list[dict]] = {}
+    for note in peer_notes.values():
+        for rel, raw in ((note or {}).get("files") or {}).items():
+            try:
+                found.setdefault(rel, []).append(_version(raw))
+            except (IndexError, TypeError, KeyError):
+                continue
+    return found
+
+
+def _same(e: dict | None, p: dict) -> bool:
+    return e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"])
+
+
+def _newest_wanted(state: dict, rel: str, versions: list[dict], merge: bool) -> dict | None:
+    """The version of rel this PC should take, or None. Every other PC's version with this PC's content is first
+    folded into this PC's (merge: one version, every PC's changes included); of the rest, the newest that is newer
+    than this PC's. The same answer on every PC, whatever order the notes are read in."""
+    e = state["files"].get(rel)
+    for p in versions:
+        if merge and _same(e, p):
+            e["vv"] = _merge(e["vv"], p["vv"])
+            if _key(p) > _key(e):
+                e.update(t=p["t"], m=p["m"])
+    best = None
+    for p in versions:
+        if _same(e, p) or (e is None and p["del"]) or (e is not None and not _newer(p, e)):
+            continue
+        if best is None or _newer(p, best):
+            best = p
+    return best
+
+
+def _staged(cfg: Settings, rel: str, p: dict) -> Path | None:
+    """The copy of version p in an outbox here: the outbox of the PC that made it first, then the others'."""
+    order = [p["m"], *(m for m in MACHINES if m != p["m"])]
+    for m in order:
+        if m == cfg.machine or m not in MACHINES:
+            continue
+        staged = cfg.outbox(m) / rel
+        try:
+            if staged.is_file() and hash_file(staged) == p["h"]:
+                return staged
+        except OSError:
+            continue
+    return None
+
+
+def import_from_peers(cfg: Settings, state: dict, peer_notes: dict[str, dict | None], frozen_repos: set[str],
+                      allow_deletes: bool, now: float) -> ImportResult:
     res = ImportResult()
     entries, unstable = state["files"], set(state["unstable"])
     candidates = []
     managed = _managed_folders(cfg)
     held_by_syncthing, excluded = 0, []
-    for rel, raw in ((peer_note or {}).get("files") or {}).items():
+    for rel, versions in _peer_versions(peer_notes).items():
         if not _safe_rel(cfg, rel):
             res.skipped.append(f"{rel!r}: not inside a synced folder on this PC, ignored")
             continue
-        if skipped(rel):  # this PC's own rules say it is not data (an older tool on the other PC may still send it)
+        if skipped(rel):  # this PC's own rules say it is not data (an older tool elsewhere may still send it)
             excluded.append(rel)
             continue
         if managed and _under(cfg.home / rel, managed):
             held_by_syncthing += 1  # Syncthing brings it straight from its own writer (the VPS for settlements)
             continue
-        p, e = _version(raw), entries.get(rel)
-        if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
-            e["vv"] = _merge(e["vv"], p["vv"])  # same content: one version, both PCs' changes included
-            if _key(p) > _key(e):
-                e.update(t=p["t"], m=p["m"])
-            continue
-        if (e is None and p["del"]) or (e is not None and not _newer(p, e)):
-            continue
-        candidates.append((rel, p, e))
+        if p := _newest_wanted(state, rel, versions, merge=True):
+            candidates.append((rel, p, entries.get(rel)))
     if held_by_syncthing:
         res.skipped.append(f"{held_by_syncthing} files in folders this PC's Syncthing gets directly from their source")
     if excluded:
-        res.skipped.append(f"{len(excluded)} files the {cfg.peer} lists that this PC does not sync (temporary, secret "
+        res.skipped.append(f"{len(excluded)} files the other PCs list that this PC does not sync (temporary, secret "
                            f"or excluded), ignored: e.g. {sorted(excluded)[0]}")
     allowed = _ignored_here(cfg, [rel for rel, _, _ in candidates])
     takes, deletes = [], []
@@ -397,12 +461,8 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
         if p["del"]:
             deletes.append((rel, p, clash))
             continue
-        staged = cfg.peer_outbox / rel
-        try:
-            arrived = staged.is_file() and hash_file(staged) == p["h"]
-        except OSError:
-            arrived = False
-        if not arrived:
+        staged = _staged(cfg, rel, p)
+        if staged is None:
             res.waiting += 1
             continue
         if is_sqlite(staged) and sqlite_open(cfg.home / rel):
@@ -422,6 +482,7 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
             held, res.held_deletes, res.held_today, res.day_limit = deletes, len(deletes), done_today, day_limit
             deletes = []
     state["held_deletions"] = sorted(rel for rel, _, _ in held)  # the launcher names them (older tools keep it)
+    res.held_from = sorted({p["m"] for _, p, _ in held})
     for rel, p, clash, staged in takes:
         if _changed_since_scan(cfg, rel, entries.get(rel)):
             res.skipped.append(f"{rel}: changed on this PC during this run, next run decides")
@@ -454,34 +515,28 @@ def import_from_peer(cfg: Settings, state: dict, peer_note: dict | None, frozen_
     return res
 
 
-def pending_from_peer(cfg: Settings, state: dict, peer_note: dict | None, repos: set[str]) -> list[tuple[str, dict]]:
-    """(path, the other PC's version) for each path in `repos` whose newer version (or deletion) the other PC's note
-    lists and this PC has not taken yet: the import's own rules, minus what it would never take (outside the synced
-    folders, excluded here, delivered by this PC's own Syncthing folders, tracked by Git here). For the launcher,
-    before a daily task starts."""
-    entries, managed, found = state["files"], _managed_folders(cfg), []
-    for rel, raw in ((peer_note or {}).get("files") or {}).items():
+def pending_from_peers(cfg: Settings, state: dict, peer_notes: dict[str, dict | None],
+                       repos: set[str]) -> list[tuple[str, dict]]:
+    """(path, the version to take) for each path in `repos` whose newer version (or deletion) another PC's note lists
+    and this PC has not taken yet: the import's own rules, minus what it would never take (outside the synced
+    folders, excluded here, delivered by this PC's own Syncthing folders, tracked by Git here). The version's "m" is
+    the PC that made it. Read only (no merge into this PC's state). For the launcher, before a daily task starts."""
+    managed, found = _managed_folders(cfg), []
+    for rel, versions in _peer_versions(peer_notes).items():
         if _repo_of(cfg, rel) not in repos or not _safe_rel(cfg, rel) or skipped(rel):
             continue
         if managed and _under(cfg.home / rel, managed):
             continue
-        try:
-            p = _version(raw)
-        except (IndexError, TypeError):
-            continue
-        e = entries.get(rel)
-        if e is not None and e["del"] == p["del"] and (p["del"] or e["h"] == p["h"]):
-            continue
-        if (e is None and p["del"]) or (e is not None and not _newer(p, e)):
-            continue
-        found.append((rel, p))
+        if p := _newest_wanted(state, rel, versions, merge=False):
+            found.append((rel, p))
     allowed = _ignored_here(cfg, [rel for rel, _ in found])
-    return sorted((rel, p) for rel, p in found if rel in allowed)
+    return sorted(((rel, p) for rel, p in found if rel in allowed), key=lambda item: item[0])
 
 
 def _record_clash(state: dict, res: ImportResult, rel: str, p: dict, backup: Path | None, now: float) -> None:
     what = "deleted" if p["del"] else "changed"
-    res.clashes.append(f"{rel}: changed on both PCs; {p['m']}'s {what} version kept, this PC's copy in {backup}")
+    res.clashes.append(f"{rel}: changed here and on the {p['m']}; {p['m']}'s {what} version kept, this PC's copy in "
+                       f"{backup}")
     state["clashes"].append({"path": rel, "when": now, "kept": p["m"], "backup": str(backup) if backup else None})
 
 
@@ -497,23 +552,54 @@ def _outbox_files(root: Path):
                 yield rel, path
 
 
-def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
-    """Keep exactly the files the other PC lacks and that are newer here; remove the rest. With no readable note
-    from the other PC the outbox is left as it is: nothing new is sent (it may already have every file) and nothing
-    already on its way is thrown away."""
-    if peer_note is None:
+def _lacks(peer_files: dict, rel: str, e: dict) -> bool:
+    """The other PC (its note's files) has neither this content of rel nor a newer version."""
+    raw = peer_files.get(rel)
+    if raw is None:
+        return True
+    try:
+        p = _version(raw)
+    except (IndexError, TypeError, KeyError):
+        return True
+    return not ((not p["del"] and p["h"] == e["h"]) or _newer(p, e))
+
+
+def refresh_outbox(cfg: Settings, state: dict, peer_notes: dict[str, dict | None], now: float | None = None) -> int:
+    """Keep exactly the versions this PC should send that at least one other PC lacks; remove the rest once every
+    other PC has them. This PC sends its own changes (the version's "m" is this PC). A version made elsewhere waits
+    in its own PC's outbox, which Syncthing passes on through every PC holding a copy, so nothing is sent twice or
+    bounces back; only when that PC's sync has been quiet for RELAY_AFTER_H (off, travelling) does this PC send it
+    too (with `now`), so a PC that lacks it (a new one, one that lost a file) is not left waiting.
+    A PC that wrote a note before but cannot be read this run (a newer tool, its note missing) is treated as the
+    two-PC tool treated the other PC then: nothing new is sent for it and nothing already on its way is thrown
+    away. With no readable note at all the outbox is left as it is."""
+    readable, unknown = joined_peers(state, peer_notes)
+    if not readable:
         return 0
-    peer_files = peer_note.get("files") or {}
+    peer_files = [n.get("files") or {} for n in readable.values()]
+    quiet: dict[str, bool] = {}
+
+    def sends(maker: str) -> bool:
+        if maker == cfg.machine:
+            return True
+        if now is None:
+            return False
+        if maker not in quiet:
+            note = readable.get(maker)
+            try:
+                seen = max(float((note or {}).get("written") or 0.0), float(read_alive(cfg, maker) or 0.0))
+            except (TypeError, ValueError):
+                seen = 0.0
+            quiet[maker] = note is None or now - seen > RELAY_AFTER_H * 3600
+        return quiet[maker]
+
     unstable = set(state["unstable"])
     wanted: dict[str, dict] = {}
     for rel, e in state["files"].items():
-        if e["del"] or rel in unstable:
+        if e["del"] or rel in unstable or not sends(e["m"]):
             continue
-        raw = peer_files.get(rel)
-        if raw is not None:
-            p = _version(raw)
-            if (not p["del"] and p["h"] == e["h"]) or _newer(p, e):
-                continue
+        if not any(_lacks(files, rel, e) for files in peer_files):
+            continue
         src = cfg.home / rel
         if is_sqlite(src) and sqlite_open(src):
             continue
@@ -535,6 +621,8 @@ def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
             continue
         record[rel] = e["h"]
         written += 1
+    if unknown:  # a PC that cannot be read now may still need what is on its way: keep it
+        return written
     if root.exists():
         for rel, path in list(_outbox_files(root)):
             if rel not in wanted:
@@ -550,12 +638,12 @@ def refresh_outbox(cfg: Settings, state: dict, peer_note: dict | None) -> int:
 
 
 # ----------------------------------------------------------------- one-off: deletions made before the sync existed
-def adopt_peer_deletions(cfg: Settings, state: dict, peer_note: dict, baseline: set[str], now: float,
+def adopt_peer_deletions(cfg: Settings, state: dict, peer: str, peer_note: dict, baseline: set[str], now: float,
                          apply: bool) -> list[str]:
     """Files this PC has that were in the shared starting point (`baseline`: the trip's 28 Oct data zip and what the
-    trip sync copied over) but that the other PC no longer has: the other PC deleted them before this tool recorded
-    deletions. With apply, each is moved to the backup folder and recorded as deleted by the other PC, so neither
-    PC brings it back. Returns the paths (all of them on a dry run)."""
+    trip sync copied over) but that `peer` (the desktop or the laptop) no longer has: it deleted them before this
+    tool recorded deletions. With apply, each is moved to the backup folder and recorded as deleted by `peer`, so
+    neither PC brings it back. Returns the paths (all of them on a dry run)."""
     peer_files = peer_note.get("files") or {}
     paths = sorted(rel for rel, e in state["files"].items()
                    if not e["del"] and rel not in peer_files and rel in baseline)
@@ -567,7 +655,7 @@ def adopt_peer_deletions(cfg: Settings, state: dict, peer_note: dict, baseline: 
             _replace(cfg, rel, None, now, keep_old=True)
         except OSError:
             continue
-        state["files"][rel] = {"h": None, "t": now, "m": cfg.peer, "vv": {cfg.peer: now}, "del": True,
+        state["files"][rel] = {"h": None, "t": now, "m": peer, "vv": {peer: now}, "del": True,
                                "size": 0, "mt": 0}
         done.append(rel)
     save_state(cfg, state)
@@ -606,14 +694,18 @@ def _prune(cfg: Settings, state: dict, now: float) -> None:
                 shutil.rmtree(day, ignore_errors=True)
 
 
-def sync_data(cfg: Settings, state: dict, peer_note: dict | None, now: float, frozen_repos: set[str] = frozenset(),
-              allow_deletes: bool = False, note_extra: dict | None = None) -> ImportResult:
-    """Scan, import the other PC's newer versions, refresh this PC's outbox, then write the note (files first, then
-    the note that names them) and the state."""
-    scan(cfg, state, now, set(frozen_repos), peer_note)
-    res = import_from_peer(cfg, state, peer_note, set(frozen_repos), allow_deletes, now)
+def sync_data(cfg: Settings, state: dict, peer_notes: dict[str, dict | None], now: float,
+              frozen_repos: set[str] = frozenset(), allow_deletes: bool = False,
+              note_extra: dict | None = None) -> ImportResult:
+    """Scan, import the other PCs' newer versions, refresh this PC's outbox, then write the note (files first, then
+    the note that names them) and the state. peer_notes: every other PC's note (read_peer_notes; None for one not
+    there yet or not to be followed)."""
+    readable, _unknown = joined_peers(state, peer_notes)
+    state["peers_seen"] = sorted(set(state.get("peers_seen") or []) | set(readable))
+    scan(cfg, state, now, set(frozen_repos), peer_notes)
+    res = import_from_peers(cfg, state, peer_notes, set(frozen_repos), allow_deletes, now)
     res.skipped = [*state["errors"], *res.skipped]
-    res.exported = refresh_outbox(cfg, state, peer_note)
+    res.exported = refresh_outbox(cfg, state, peer_notes, now)
     _prune(cfg, state, now)
     note = make_note(cfg, state, now, note_extra)
     if not _same_note(read_note(cfg, cfg.machine), note):  # the note is large: Syncthing sends it only on change

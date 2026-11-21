@@ -25,6 +25,10 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 APPS = {a.id: a for a in load_apps(HERE / "apps.yaml")}
 TASKS = load_tasks(Path(os.environ.get("LAUNCHER_TASKS") or HERE / "tasks.yaml"))
 RUNNER = TaskRunner(TASKS, LOG_DIR)
+# the tasks with `auto` start by themselves on the PC they name, once it is switched on (config.AutoConfig); a trial
+# run with another tasks file never does
+if not os.environ.get("LAUNCHER_TASKS"):
+    RUNNER.start_auto()
 
 for warning in check_paths(list(APPS.values()), TASKS):
     print(f"[launcher] WARNING: {warning}")
@@ -124,6 +128,14 @@ def start_task(task_id: str, take_over: bool = False, allow_unsynced: bool = Fal
             "claimed_by": RUNNER.refusals.get(task_id) if err else None,
             "offer": RUNNER.offers.get(task_id) if err else None,
             "warnings": RUNNER.warnings.get(task_id, [])}
+
+
+@app.post("/api/day/reserve")
+def reserve_day(day: str | None = None):
+    """"Run today here" (no `day`), or a later day (YYYY-MM-DD): this PC claims the daily tasks' day without starting
+    anything, so the PC that starts them by itself leaves that day to this one."""
+    err, claimed = RUNNER.reserve(day)
+    return {"ok": err is None, "errors": [err] if err else [], "day": claimed}
 
 
 @app.post("/api/tasks/{task_id}/stop")

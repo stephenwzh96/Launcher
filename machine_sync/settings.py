@@ -1,24 +1,27 @@
-"""Where everything lives. Every path the tool touches comes from a Settings, so tests run two PCs in temp folders."""
+"""Where everything lives. Every path the tool touches comes from a Settings, so tests run the PCs in temp folders."""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-MACHINES = ("desktop", "laptop")
+# Every machine that may run the sync (three-machine design, 20 Nov 2026). A machine that has never written a note is
+# not yet part of the sync: the others neither wait for it nor stage files for it (data_sync.joined_peers).
+MACHINES = ("desktop", "laptop", "vps")
 DEFAULT_REPOS = (
     "Marco/Australia-Rates", "Marco/CB Pricer", "Marco/Curve", "Marco/FOMC", "Marco/launcher",
     "IBKR", "Trend", "FXMGT/JPMQFX01_build",
 )
 LAUNCHER_REPO = "Marco/launcher"  # tasks.yaml and this tool: on the daily tasks' side of every rule
 DEFAULT_PLAIN_ROOTS = {"FXMGT": ["JPMQFX01_build"]}  # folders that are not repos: all data, minus these sub-folders
-OUTBOX_NAMES = {"laptop": "TripSync", "desktop": "DesktopSync"}  # the laptop's keeps the trip sync's folder
+OUTBOX_NAMES = {"laptop": "TripSync", "desktop": "DesktopSync", "vps": "VpsSync"}  # laptop: the trip sync's folder
 
 INTERVAL_MIN = 5
+RELAY_AFTER_H = 6  # a version another PC made is staged here too once that PC's sync has been quiet this long
 STABLE_S = 60  # a file changed more recently than this is still being written: not exported or replaced
 BRAKE_MIN, BRAKE_FRACTION = 50, 0.02  # more deletions than max(these) in one run are held
 BRAKE_DAY_MIN, BRAKE_DAY_FRACTION = 150, 0.05  # ... and more than max(these) in one day (runs added up)
-TOMBSTONE_DAYS = 30  # a deletion stays in the note at least this long, and until the other PC's note shows it ...
+TOMBSTONE_DAYS = 30  # a deletion stays in the note at least this long, and until every other PC's note shows it ...
 TOMBSTONE_MAX_DAYS = 90  # ... or this long, whichever comes first
 BACKUP_DAYS = 60  # backups of clashes and deletions (MachineSync\backup\<date>)
 CLAIM_KEEP_DAYS = 30
@@ -63,8 +66,9 @@ class Settings:
             raise ValueError(f"machine must be one of {MACHINES}, not {self.machine!r}")
 
     @property
-    def peer(self) -> str:
-        return "laptop" if self.machine == "desktop" else "desktop"
+    def peers(self) -> tuple[str, ...]:
+        """The other machines, in MACHINES order."""
+        return tuple(m for m in MACHINES if m != self.machine)
 
     @property
     def sync_dir(self) -> Path:
@@ -77,9 +81,9 @@ class Settings:
     def own_outbox(self) -> Path:
         return self.outbox(self.machine)
 
-    @property
-    def peer_outbox(self) -> Path:
-        return self.outbox(self.peer)
+    def outboxes(self) -> tuple[Path, ...]:
+        """Every machine's outbox as this PC sees it: its own (send-only) and the others' (receive-only)."""
+        return tuple(self.outbox(m) for m in MACHINES)
 
     def note_path(self, machine: str) -> Path:
         return self.outbox(machine) / "_state" / f"{machine}.json"

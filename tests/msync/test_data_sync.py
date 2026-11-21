@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 
 from machine_sync.data_files import data_files
-from machine_sync.data_sync import load_state, read_alive, read_note, sync_data
+from machine_sync.data_sync import load_state, read_alive, read_note, read_peer_notes, sync_data
 from msync.helpers import TempDirCase, run, syncthing, two_pcs
 
 SQLITE = b"SQLite format 3\x00" + b"\x00" * 84
@@ -44,7 +44,7 @@ class DataSyncTest(TempDirCase):
 
     def pc_run(self, cfg, frozen=frozenset(), allow_deletes=False):
         state = load_state(cfg)
-        return sync_data(cfg, state, read_note(cfg, cfg.peer), self.tick(), frozen_repos=set(frozen),
+        return sync_data(cfg, state, read_peer_notes(cfg), self.tick(), frozen_repos=set(frozen),
                          allow_deletes=allow_deletes)
 
     def exchange(self) -> None:
@@ -269,7 +269,7 @@ class DataSyncTest(TempDirCase):
         self.assertEqual(res.clashes, [])
 
     def test_file_written_after_scan_is_not_replaced(self) -> None:
-        from machine_sync.data_sync import import_from_peer, scan
+        from machine_sync.data_sync import import_from_peers, scan
 
         self.synced("data/f.csv", "v1")
         self.write(self.lap, "data/f.csv", "L")
@@ -281,7 +281,7 @@ class DataSyncTest(TempDirCase):
         scan(self.desk, state, now)
         self.write(self.desk, "data/f.csv", "written after the scan", age=300)
         self.write(self.desk, "data/new.csv", "made here after the scan", age=300)
-        res = import_from_peer(self.desk, state, read_note(self.desk, "laptop"), set(), False, now)
+        res = import_from_peers(self.desk, state, read_peer_notes(self.desk), set(), False, now)
         self.assertEqual(self.read(self.desk, "data/f.csv"), "written after the scan")
         self.assertEqual(self.read(self.desk, "data/new.csv"), "made here after the scan")
         self.assertEqual(res.taken, 0)
@@ -330,7 +330,7 @@ class DataSyncTest(TempDirCase):
 
         note = read_note(self.desk, "laptop")
         for rel in ("../evil.txt", "Unknown/x.txt", "Trend/../../evil2.txt"):
-            staged = self.desk.peer_outbox / rel
+            staged = self.desk.outbox("laptop") / rel
             staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_text("payload")
             note["files"][rel] = [hash_file(staged), self.clock + 999, "laptop", {"laptop": self.clock + 999}, False]
@@ -368,11 +368,11 @@ class DataSyncTest(TempDirCase):
         self.write(self.desk, "data/made_here.txt", "new on the desktop, never on the laptop")
         self.pc_run(self.desk)
         state = load_state(self.desk)
-        plan = adopt_peer_deletions(self.desk, state, read_note(self.desk, "laptop"),
+        plan = adopt_peer_deletions(self.desk, state, "laptop", read_note(self.desk, "laptop"),
                                     baseline={"Trend/data/old_cache.json"}, now=self.tick(), apply=False)
         self.assertEqual(plan, ["Trend/data/old_cache.json"])
         self.assertTrue(self.path(self.desk, "data/old_cache.json").exists())  # dry run changes nothing
-        adopt_peer_deletions(self.desk, state, read_note(self.desk, "laptop"),
+        adopt_peer_deletions(self.desk, state, "laptop", read_note(self.desk, "laptop"),
                              baseline={"Trend/data/old_cache.json"}, now=self.tick(), apply=True)
         self.assertFalse(self.path(self.desk, "data/old_cache.json").exists())
         self.assertTrue(self.path(self.desk, "data/made_here.txt").exists())
@@ -445,7 +445,7 @@ class DataSyncTest(TempDirCase):
         rels = ("Trend/data/half.csv.tmp", "Trend/live/.staging/envelope.json", "Trend/data/logs/fetch_status.json",
                 "Trend/data/.env")
         for rel in rels:
-            staged = self.desk.peer_outbox / rel
+            staged = self.desk.outbox("laptop") / rel
             staged.parent.mkdir(parents=True, exist_ok=True)
             staged.write_text("from the laptop")
             note["files"][rel] = [hash_file(staged), self.clock + 999, "laptop", {"laptop": self.clock + 999}, False]
@@ -454,7 +454,7 @@ class DataSyncTest(TempDirCase):
         res = self.pc_run(self.desk)
         for rel in rels:
             self.assertFalse((self.desk.home / rel).exists(), rel)
-        self.assertTrue(any("4 files the laptop lists that this PC does not sync" in s for s in res.skipped),
+        self.assertTrue(any("4 files the other PCs list that this PC does not sync" in s for s in res.skipped),
                         res.skipped)
 
     def test_backups_kept_sixty_days(self) -> None:

@@ -10,7 +10,7 @@ from . import claims as day_claims
 from .code_sync import RepoResult, repo_note, retry_pending_uv, sync_code
 from .daily import (busy_repos, code_frozen, load_daily_tasks, read_claims, record_claim, running_tasks,
                     venvs_in_use)
-from .data_sync import ImportResult, clock_skew, load_state, read_alive, read_note, sync_data
+from .data_sync import ImportResult, clock_skew, load_state, read_alive, read_peer_notes, sync_data
 from .procs import Proc, processes
 from .selfupdate import self_update
 from .settings import LAUNCHER_REPO, Settings
@@ -44,15 +44,27 @@ def run_once(cfg: Settings, now: datetime | None = None, allow_deletes: bool = F
         runlock.release(cfg.sync_dir)
 
 
+def leading_peer(peer_notes: dict[str, dict | None], repo: str) -> tuple[str | None, dict | None]:
+    """(name, repo state) of the other PC last worked on in `repo` (its note's last_activity), or (None, None)."""
+    best: tuple[str | None, dict | None] = (None, None)
+    for machine, note in peer_notes.items():
+        state = ((note or {}).get("repos") or {}).get(repo)
+        if isinstance(state, dict) and (best[1] is None or
+                                        state.get("last_activity", 0) > best[1].get("last_activity", 0)):
+            best = (machine, state)
+    return best
+
+
 def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool, procs: list[Proc] | None,
          tasks: list[dict] | None, uv_cmd: list[str] | None) -> str:
     warnings: list[str] = []
-    peer_note = read_note(cfg, cfg.peer)
-    shown_note = peer_note
-    if peer_note and peer_note.get("format", 0) > NOTE_FORMAT:
-        warnings.append(f"the {cfg.peer} runs a newer sync tool: this PC does not follow or import from it until its "
-                        "own tool updates (from the launcher's main)")
-        peer_note = None
+    shown_notes = read_peer_notes(cfg)
+    peer_notes = dict(shown_notes)
+    for machine, note in shown_notes.items():
+        if note and note.get("format", 0) > NOTE_FORMAT:
+            warnings.append(f"the {machine} runs a newer sync tool: this PC does not follow or import from it until "
+                            "its own tool updates (from the launcher's main)")
+            peer_notes[machine] = None
     tasks = load_daily_tasks(cfg) if tasks is None else tasks
     procs = processes() if procs is None else procs
     busy = busy_repos(cfg, tasks)
@@ -71,14 +83,14 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
         warnings.append(f"could not read today's claim from GitHub ({err})")
     names = {t["claim"] for t in tasks if t.get("claim")} or None
     frozen = code_frozen(cfg, now, names) and not update_frozen
-    peer_repos = (peer_note or {}).get("repos") or {}
     main_only = busy | {LAUNCHER_REPO}  # the daily tasks' repos and the launcher follow only the default branch
 
     def one(repo: str) -> RepoResult:
         try:
-            return sync_code(cfg, repo, peer_repos.get(repo), frozen=frozen and repo in busy,
+            who, lead = leading_peer(peer_notes, repo)
+            return sync_code(cfg, repo, lead, frozen=frozen and repo in busy,
                              running=repo in running_repos, in_use=in_use, uv_cmd=uv_cmd,
-                             default_only=repo in main_only)
+                             default_only=repo in main_only, who=who)
         except Exception as err:  # noqa: BLE001 - one repo's trouble must not stop the others or the data
             return RepoResult(repo, line=f"error: {type(err).__name__}: {err}",
                               warnings=[f"{repo}: the code step failed ({type(err).__name__}: {err})"])
@@ -96,16 +108,17 @@ def _run(cfg: Settings, now: datetime, allow_deletes: bool, update_frozen: bool,
     repos_note = {r.repo: repo_note(r.state, r.repo in running_repos) for r in results if r.state}
     state = load_state(cfg)
     try:
-        res: ImportResult = sync_data(cfg, state, peer_note, now.timestamp(), frozen_repos=running_repos,
+        res: ImportResult = sync_data(cfg, state, peer_notes, now.timestamp(), frozen_repos=running_repos,
                                       allow_deletes=allow_deletes,
                                       note_extra={"repos": repos_note, "claims": read_claims(cfg.sync_dir),
                                                   "running_tasks": sorted(running_ids)})
     except Exception as err:  # noqa: BLE001 - still write the status; the next run tries again
         res = ImportResult(skipped=[f"the data step failed: {type(err).__name__}: {err}"])
         warnings.append(f"the data step failed ({type(err).__name__}: {err}); next run tries again")
-    if skew := clock_skew(cfg, state, shown_note, read_alive(cfg, cfg.peer), now.timestamp()):
-        warnings.append(skew)
-    text = render(cfg, now, results, res, state, shown_note, warnings, read_claims(cfg.sync_dir),
-                  peer_seen=read_alive(cfg, cfg.peer))
+    alive = {m: read_alive(cfg, m) for m in cfg.peers}
+    for machine, note in shown_notes.items():
+        if skew := clock_skew(cfg, state, machine, note, alive[machine], now.timestamp()):
+            warnings.append(skew)
+    text = render(cfg, now, results, res, state, shown_notes, warnings, read_claims(cfg.sync_dir), peer_seen=alive)
     write_status(cfg, now, text)
     return text

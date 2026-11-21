@@ -82,6 +82,36 @@ class RemindConfig(BaseModel):
         return self
 
 
+AUTO_SWITCH = "auto_start.on"  # in MachineSync: the PC named by `auto.pc` starts tasks by itself only while it exists
+
+
+class AutoConfig(BaseModel):
+    """The task starts by itself on one PC (tasks.yaml `auto`; three-machine design, 20 Nov 2026: the VPS runs the
+    day unless another PC has claimed it). On a weekday in the task's timezone, from `at`, when the task is due by
+    its reminder's own rules (Start of Day: no record for the day and no run going; the IBKR cycle: Start of Day said
+    GO and the first press is not done; never the second press, which follows the approval through IBKR's resume
+    task). Only on the PC named `pc`, and only while that PC has the switch file MachineSync\\auto_start.on, made by
+    hand once it is ready (D65's readiness list). It starts as a press would: a day another PC has claimed (its "Run
+    today here", or a press there) is left to it."""
+    pc: str  # the PC that starts the task (machine_sync.settings.MACHINES)
+    at: str  # "HH:MM" in the task's timezone
+
+    @field_validator("pc")
+    @classmethod
+    def _known_pc(cls, pc: str) -> str:
+        from machine_sync.settings import MACHINES
+
+        if pc not in MACHINES:
+            raise ValueError(f"auto.pc must be one of {MACHINES}, not {pc!r}")
+        return pc
+
+    @field_validator("at")
+    @classmethod
+    def _clock_time(cls, at: str) -> str:
+        time.fromisoformat(at)  # ValueError: not HH:MM
+        return at
+
+
 class TaskConfig(BaseModel):
     """A one-shot Start of Day job from tasks.yaml."""
     id: str
@@ -110,6 +140,9 @@ class TaskConfig(BaseModel):
     # something else, as the IBKR paper cycle's trades the approved list
     again_label: str | None = None
     env: dict[str, str] = Field(default_factory=dict)
+    # optional: the task starts by itself on one PC (AutoConfig); needs `claim` (one PC per day) and `remind` (when
+    # it is due)
+    auto: AutoConfig | None = None
 
     @field_validator("claim_day")
     @classmethod
@@ -117,6 +150,12 @@ class TaskConfig(BaseModel):
         if rule is not None:
             claim_day_rule(rule)  # ValueError: the rule cannot be read; a wrong day would let both PCs run
         return rule
+
+    @model_validator(mode="after")
+    def _auto_needs_claim_and_remind(self) -> "TaskConfig":
+        if self.auto and not (self.claim and self.remind):
+            raise ValueError("auto needs claim (one PC per day) and remind (when the task is due)")
+        return self
 
     def resolved_cwd(self) -> Path:
         return (MARCO_DIR / self.cwd).resolve()

@@ -26,12 +26,12 @@ from pathlib import Path
 
 import progress
 import reminder
-from config import TaskConfig, claim_day_rule
+from config import AUTO_SWITCH, TaskConfig, claim_day_rule
 from machine_sync import claims as day_claims
 from machine_sync import runlock as sync_lock
 from machine_sync import startcheck
 from machine_sync.daily import read_claims, record_claim
-from machine_sync.settings import Settings, syncthing_folders
+from machine_sync.settings import MACHINES, Settings, syncthing_folders
 from process_control import pid_alive, send_ctrl_break
 
 HERE = Path(__file__).resolve().parent
@@ -44,6 +44,23 @@ SLACK = timedelta(seconds=60)
 STOP_GRACE_S = 20
 # no window, and a process group of its own, which Stop can send CTRL_BREAK_EVENT without reaching the launcher
 START_FLAGS = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+AUTO_TICK_S = 60  # how often the tasks with `auto` are looked at
+AUTO_RETRY_S = 300  # an automatic start that could not go ahead (GitHub, not in step) tries again this much later
+
+
+def _notify(text: str) -> None:
+    """Send `text` to Stephen when the launcher's environment names a script that does (LAUNCHER_NOTIFY: a
+    PowerShell script taking -Message, e.g. the VPS's C:\\IBC\\send-alert.ps1, which sends it on Telegram). Best
+    effort, never waited for."""
+    script = os.environ.get("LAUNCHER_NOTIFY")
+    if not script:
+        return
+    try:
+        subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                          script, "-Message", text], creationflags=subprocess.CREATE_NO_WINDOW,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
 
 
 def _aware(text: str) -> datetime:
@@ -103,8 +120,9 @@ def _prune_on_github() -> None:
 
 class TaskRunner:
     def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S,
-                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None):
+                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None, notify=_notify):
         self.tasks = {t.id: t for t in tasks}
+        self.notify = notify  # (text) -> None: what an automatic start did or could not do, for Stephen
         self.stop_grace_s = stop_grace_s
         self.claimer = claimer  # (task, day, machine, take_over, record=) -> ClaimResult
         # deletes old claims from GitHub after a claimed start, in the background; only beside the real claimer, so a
@@ -134,6 +152,14 @@ class TaskRunner:
                 self.runs = json.loads(self.state_path.read_text())
             except (OSError, ValueError) as exc:  # cut short by a reboot mid-write: start with no history
                 print(f"[launcher] WARNING: task state unreadable ({exc}); starting without it")
+        # task id -> what its automatic start did on its last day: {"day", "result" (started, left, failed),
+        # "detail", "at", "retry_after"}; kept across a launcher restart, so a day is never started twice
+        self.auto_path = log_dir / "auto_state.json"
+        self.auto: dict[str, dict] = {}
+        try:
+            self.auto = json.loads(self.auto_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
 
     # ----- state -----
     def _save(self) -> None:
@@ -165,7 +191,7 @@ class TaskRunner:
         run["finished"] = datetime.now().isoformat(timespec="seconds")
         self._save()
 
-    # ----- the day's claim (one daily run per day across both PCs) -----
+    # ----- the day's claim (one daily run per day across the PCs) -----
     def _machine(self) -> str | None:
         try:
             return (self.sync_dir / "machine.txt").read_text(encoding="utf-8").strip() or None
@@ -194,20 +220,37 @@ class TaskRunner:
                                                                          task.resolved_cmd(), launcher=False))
         if not lines:
             return None
-        return (f"{task.label}: this PC is not in step with GitHub's main and the {cfg.peer}, so today's run would "
+        return (f"{task.label}: this PC is not in step with GitHub's main and the other PCs, so today's run would "
                 "use other code or data:\n" + "\n".join(f"- {ln}" for ln in lines)
                 + "\nFix that and start again, or start anyway.")
 
+    def _holder_elsewhere(self, task: TaskConfig, machine: str, now: datetime | None = None) -> str | None:
+        """The other PC recorded as holding the task's claim today (MachineSync\\daily_claim.json), if any."""
+        day = self._day(task, now)
+        return next((c["holder"] for c in read_claims(self.sync_dir)
+                     if c["claim"] == task.claim and c["day"] == day and c["holder"] != machine), None)
+
     def _check_peer_idle(self, task: TaskConfig, cfg: Settings) -> str | None:
-        """Before a take-over: None unless the other PC's sync says it is on (ran within 15 minutes) or running a
-        daily task (fencing: the claim alone cannot stop a run that is still going there)."""
+        """Before a take-over: None unless the sync of the PC holding the day (every other PC when that is not
+        known) says it is on (ran within 15 minutes) or running a daily task (fencing: the claim alone cannot stop a
+        run that is still going there)."""
         labels = {t.id: t.label for t in self.tasks.values()}
-        found = startcheck.peer_busy(cfg, time.time(), labels)
-        if not found:
+        holder = self._holder_elsewhere(task, cfg.machine)
+        now = time.time()
+        busy = {m: startcheck.peer_busy(cfg, now, labels, machine=m)
+                for m in ([holder] if holder in cfg.peers else cfg.peers)}
+        busy = {m: lines for m, lines in busy.items() if lines}
+        if not busy:
             return None
-        return (f"{task.label}: not taken over: the {cfg.peer} may still be running today's daily run: "
-                + "; ".join(found) + ". Two runs on one day can send duplicate orders. Take over anyway only if "
-                f"you have checked that the {cfg.peer}'s run has ended (its launcher, or the execution dashboard).")
+        names = " and ".join(f"the {m}" for m in busy)
+        if len(busy) == 1:
+            found = "; ".join(next(iter(busy.values())))
+        else:
+            found = "; ".join(f"the {m}: {line}" for m, lines in busy.items() for line in lines)
+        return (f"{task.label}: not taken over: {names} may still be running today's daily run: "
+                + found + ". Two runs on one day can send duplicate orders. Take over anyway only if "
+                f"you have checked that the {'run there' if len(busy) == 1 else 'runs there'} ended (its launcher, "
+                "or the execution dashboard).")
 
     def _start_warnings(self, task: TaskConfig, cfg: Settings) -> list[str]:
         """What a start goes ahead despite, shown with the run: edited tracked files in the task's repos; the other
@@ -253,13 +296,13 @@ class TaskRunner:
         if without_claim:
             record_claim(self.sync_dir, task.claim, day, machine, at)  # this PC's run of the day, as far as it knows
             self._warn(task.id, f"Started without the day's claim: GitHub could not be reached ({res.error}). "
-                                f"Check that the {self._peer(machine)} is not running {day}'s daily tasks.")
+                                f"Check that {self._peers(machine)} is running {day}'s daily tasks.")
             return None
         self.offers[task.id] = "start_without_claim"
         return (f"{task.label}: could not check GitHub for {day}'s claim ({res.error}), and this PC has no record "
-                f"of holding it; not started. Start without the claim only if the {self._peer(machine)} is off or "
-                f"is not running {day}'s daily tasks: IBKR's run lock refuses a second run of the book on its "
-                "database, but nothing stops a second Start of Day on the other PC.")
+                f"of holding it; not started. Start without the claim only if {self._peers(machine)} is running "
+                f"{day}'s daily tasks: IBKR's run lock refuses a second run of the book on its database, but "
+                "nothing stops a second Start of Day on another PC.")
 
     def _recorded_holder(self, task: TaskConfig, day: str, machine: str) -> bool:
         return any(c["claim"] == task.claim and c["day"] == day and c["holder"] == machine
@@ -269,13 +312,141 @@ class TaskRunner:
         self.warnings.setdefault(task_id, []).append(text)
 
     @staticmethod
-    def _peer(machine: str) -> str:
-        return {"desktop": "laptop", "laptop": "desktop"}.get(machine, "other PC")
+    def _peers(machine: str) -> str:
+        """The other PCs, for a sentence: "neither the laptop nor the vps"."""
+        return "neither " + " nor ".join(f"the {m}" for m in MACHINES if m != machine)
 
     def _held_elsewhere(self, task: TaskConfig, now: datetime) -> bool:
         day, machine = self._day(task, now), self._machine()
         return any(c["claim"] == task.claim and c["day"] == day and c["holder"] != machine
                    for c in read_claims(self.sync_dir))
+
+    # ----- a day without a press: the automatic start, and "Run today here" -----
+    def auto_armed(self, task: TaskConfig) -> bool:
+        """This PC is the one the task's `auto` names, and its switch (MachineSync\\auto_start.on) is on."""
+        return bool(task.auto) and self._machine() == task.auto.pc and (self.sync_dir / AUTO_SWITCH).exists()
+
+    def auto_tick(self, now: datetime | None = None) -> list[str]:
+        """One look at the tasks with `auto` (config.AutoConfig): start each one due now on this PC, as a press
+        would (the day's claim, the start checks). A day another PC holds is left to it; a start refused for another
+        reason (GitHub unreachable, this PC not in step) tries again AUTO_RETRY_S later and is never forced. Returns
+        one line per thing done, also kept in logs/auto.log and sent with self.notify."""
+        now = now or datetime.now(UTC)
+        said = []
+        for task_id, task in self.tasks.items():
+            if not self.auto_armed(task):
+                continue
+            day = self._day(task, now)
+            last = self.auto.get(task_id) or {}
+            if last.get("day") == day and (last.get("result") in ("started", "left")
+                                           or now.timestamp() < float(last.get("retry_after") or 0)):
+                continue
+            with self.lock:
+                self._settle(task_id)
+                running = self.runs.get(task_id, {}).get("state") == "running"
+            prog = progress.read(task.resolved_progress_file())
+            due = reminder.due(task, now, running, prog, day=day, at=[task.auto.at])
+            if not due or due.get("stage") == "approval":  # the second press follows the approval (IBKR resume task)
+                continue
+            if holder := self._holder_elsewhere(task, task.auto.pc, now):
+                said.append(self._auto_record(task, day, "left", f"{day} is the {holder}'s: not started here", now))
+                continue
+            err = self.start(task_id)
+            local = now.astimezone(progress.zone(task.timezone))
+            if err is None:
+                said.append(self._auto_record(task, day, "started", f"started by itself at {local:%H:%M}", now))
+            elif holder := self.refusals.get(task_id):
+                said.append(self._auto_record(task, day, "left", f"{day} is the {holder}'s: not started here", now))
+            else:
+                first = last.get("day") != day or last.get("result") != "failed"
+                said.append(self._auto_record(task, day, "failed", f"could not start by itself at {local:%H:%M}, "
+                                              f"tries again in {AUTO_RETRY_S // 60} minutes: {err}", now,
+                                              retry=True, tell=first))
+        return said
+
+    def _auto_record(self, task: TaskConfig, day: str, result: str, detail: str, now: datetime,
+                     retry: bool = False, tell: bool = True) -> str:
+        local = now.astimezone(progress.zone(task.timezone))
+        entry = {"day": day, "result": result, "detail": detail, "at": local.isoformat(timespec="seconds")}
+        if retry:
+            entry["retry_after"] = now.timestamp() + AUTO_RETRY_S
+        with self.lock:
+            self.auto[task.id] = entry
+            part = self.auto_path.with_name(self.auto_path.name + ".part")
+            part.write_text(json.dumps(self.auto, indent=1), encoding="utf-8")
+            os.replace(part, self.auto_path)
+        line = f"{task.label} on the {task.auto.pc}: {detail}"
+        with open(self.auto_path.with_name("auto.log"), "a", encoding="utf-8") as log:
+            log.write(f"{local:%Y-%m-%d %H:%M:%S} {line}\n")
+        if tell:
+            try:
+                self.notify(line)
+            except Exception:  # noqa: BLE001 - a message that cannot be sent never stops the start
+                pass
+        return line
+
+    def start_auto(self, every_s: float = AUTO_TICK_S) -> bool:
+        """Look at the tasks with `auto` every `every_s` seconds, in the background (app.py, at start). False when no
+        task has `auto`."""
+        if not any(t.auto for t in self.tasks.values()):
+            return False
+
+        def loop() -> None:
+            while True:
+                try:
+                    self.auto_tick()
+                except Exception as err:  # noqa: BLE001 - the next look tries again
+                    print(f"[launcher] WARNING: automatic start: {type(err).__name__}: {err}")
+                time.sleep(every_s)
+
+        threading.Thread(target=loop, daemon=True).start()
+        return True
+
+    def reserve(self, day: str | None = None, now: datetime | None = None) -> tuple[str | None, str]:
+        """"Run today here", or a later day: claim the daily tasks' day for this PC without starting anything, so a PC
+        that starts them by itself (`auto`) leaves that day to this one. Returns (why not, or None; the day)."""
+        now = now or datetime.now(UTC)
+        claimed = [t for t in self.tasks.values() if t.claim]
+        if not claimed:
+            return "no task here is a daily task (tasks.yaml claim)", day or ""
+        task = claimed[0]
+        today = self._day(task, now)
+        day = day or today
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            return f"{day!r} is not a date (YYYY-MM-DD)", day
+        if day < today:
+            return f"{day} has passed", day
+        machine = self._machine()
+        if not machine:
+            return f"this PC has no sync tool installed ({self.sync_dir}\\machine.txt is missing)", day
+        res = self.claimer(task, day, machine, False, record=[f"reserved by hand on {machine}: nothing started"])
+        if res.ok:
+            # the code freeze (machine_sync.daily.code_frozen) runs from the claim's time: from the day itself, for a
+            # later day
+            at = res.at or datetime.now().isoformat(timespec="seconds")
+            record_claim(self.sync_dir, task.claim, day, machine, max(at, f"{day}T00:00:00"))
+            return None, day
+        if res.holder:
+            record_claim(self.sync_dir, task.claim, day, res.holder, res.at or "")
+            if res.holder == machine:
+                return None, day
+            return (f"{day} is already the {res.holder}'s. To run it here instead, press Start and take it over once "
+                    "the run there has ended (or that PC is off).", day)
+        return f"could not reach GitHub ({res.error}): nothing reserved", day
+
+    def day_holder(self, now: datetime | None = None) -> dict | None:
+        """The daily tasks' day as this PC last saw it: {"day", "holder" (None: nobody yet), "here" (this PC)}."""
+        now = now or datetime.now(UTC)
+        claimed = [t for t in self.tasks.values() if t.claim]
+        if not claimed:
+            return None
+        task = claimed[0]
+        day, machine = self._day(task, now), self._machine()
+        holder = next((c["holder"] for c in read_claims(self.sync_dir)
+                       if c["claim"] == task.claim and c["day"] == day), None)
+        return {"day": day, "holder": holder, "here": machine}
 
     # ----- actions -----
     def start(self, task_id: str, take_over: bool = False, allow_unsynced: bool = False,
@@ -313,7 +484,7 @@ class TaskRunner:
             try:
                 try:
                     cfg = self._sync_cfg(machine)
-                except ValueError as err:  # machine.txt names neither desktop nor laptop
+                except ValueError as err:  # machine.txt names no known PC (settings.MACHINES)
                     return f"{task.label}: {self.sync_dir}\\machine.txt is not right ({err}); not started."
                 if not allow_unsynced and (refused := self._guarded(self._check_in_step, task, cfg)):
                     self.offers[task_id] = "start_anyway"
@@ -519,6 +690,10 @@ class TaskRunner:
                     "again_label": task.again_label,
                     "queued": task_id in self.queue[1:],
                     "run": None,
+                    # the task's automatic start: on which PC, from when, whether this PC is the one and switched on,
+                    # and what it did on its last day
+                    "auto": {"pc": task.auto.pc, "at": task.auto.at, "armed": self.auto_armed(task),
+                             "last": self.auto.get(task_id)} if task.auto else None,
                 }
                 if run:
                     text = _tail(self.log_dir / run["log"])
@@ -542,4 +717,4 @@ class TaskRunner:
             running_all = bool(self.queue)
             refusal = dict(self.run_all_refusal) if self.run_all_refusal else None
         return {"running_all": running_all, "stop_grace_s": self.stop_grace_s, "tasks": out,
-                "run_all_refusal": refusal}
+                "run_all_refusal": refusal, "day": self.day_holder(now)}
