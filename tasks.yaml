@@ -70,3 +70,5 @@
   auto:  # the first press, on the VPS once Start of Day says GO, not before 15:00 (the second follows the approval)
     pc: vps
     at: "15:00"
+  # on the PCs that do not hold the day: that day's cycle from the shared database (read-only; elsewhere.py)
+  elsewhere_cmd: ["../IBKR/.venv/Scripts/python.exe", "-m", "src.operations", "day", "--day", "{day}", "--mode", "paper"]

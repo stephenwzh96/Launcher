@@ -378,10 +378,17 @@ let taskTimer = null;
 // The rail marker and the colour of the state line: a success from an earlier day is due again, so it is "todo".
 // With a progress file (tasks.yaml progress_file), a run can also be stalled (running, no output for over 10 min)
 // or abandoned (the file says running, but its process is gone).
+// Another PC holds today's day: its run of the task (elsewhere.py), shown instead of this PC's own history, unless
+// a run is going here (a take-over). The same on every PC (Stephen, 23 Nov 2026).
+function away(t) {
+  return t.elsewhere && !(t.run && t.run.state === "running") ? t.elsewhere : null;
+}
+
 function stepState(t) {
   const r = t.run;
   const p = r && r.progress;
   if (t.queued) return "queued";
+  if (away(t)) return away(t).state;
   if (!r) return "todo";
   if (p && p.abandoned && r.state !== "stopped") return "abandoned";  // a run Stop ended says so instead
   if (r.state === "running" && p && p.stalled) return "stalled";
@@ -392,6 +399,7 @@ function stepState(t) {
 function stateText(t) {
   const r = t.run;
   if (t.queued) return "Queued";
+  if (away(t)) return away(t).text;
   if (!r) return "Not run yet";
   const at = isToday(r.started) ? hhmm(r.started) : `${r.started.slice(0, 10)} ${hhmm(r.started)}`;
   const step = r.step ? `step ${r.step.k} of ${r.step.n}: ${r.step.title}` : "";
@@ -448,6 +456,7 @@ function warnText(t) {
 
 function barWidth(t) {
   const r = t.run;
+  if (away(t)) return { done: 100, failed: 100, running: 50, stalled: 50 }[away(t).state] || 0;
   if (!r || t.queued) return 0;
   if (r.state === "done") return t.done_today ? 100 : 0;
   if (!r.step) return 2;
@@ -484,7 +493,7 @@ function renderTask(t) {
   runWarn.textContent = warn;
   runWarn.hidden = !warn;
   runWarn.classList.toggle("late", Boolean(t.run && t.run.progress && t.run.progress.late));
-  const notes = (t.run && t.run.warnings) || [];  // what this run's start went ahead despite
+  const notes = (!away(t) && t.run && t.run.warnings) || [];  // what this run's start went ahead despite
   // one line each: a note that lists files keeps its head ("the laptop's newer data is not here yet (111 files)");
   // the whole text is on hover and in the log
   const brief = n => (n.length > 140 && n.includes(": ") ? n.slice(0, n.indexOf(": ")) : n);
@@ -496,7 +505,7 @@ function renderTask(t) {
   $(".desc", el).textContent = t.description;
   $(".bar", el).hidden = !["running", "failed", "stopped", "stalled", "abandoned"].includes(state);
   $(".bar > span", el).style.width = `${barWidth(t)}%`;
-  const last = t.run && t.run.state !== "done" ? t.run.last_line || "" : "";
+  const last = !away(t) && t.run && t.run.state !== "done" ? t.run.last_line || "" : "";
   $(".last-line", el).textContent = last;
   $(".last-line", el).hidden = !last;
   const start = $(".start", el);
@@ -546,7 +555,7 @@ async function refreshTasks() {
     if (t.has_preview && lastState[t.id] === "running" && state !== "running") loadPreview(t.id, true);
     lastState[t.id] = state;
   }
-  const done = tasks.filter(t => t.done_today).length;
+  const done = tasks.filter(t => t.done_today || (away(t) && away(t).state === "done")).length;
   const busy = data.running_all || tasks.some(t => t.run && t.run.state === "running");
   $("#run-count").textContent = tasks.length ? `${done} of ${tasks.length} done today` : "";
   const all = $("#run-all");

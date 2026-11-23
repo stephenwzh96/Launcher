@@ -143,6 +143,10 @@ class TaskConfig(BaseModel):
     # optional: the task starts by itself on one PC (AutoConfig); needs `claim` (one PC per day) and `remind` (when
     # it is due)
     auto: AutoConfig | None = None
+    # optional: a quick read-only command (same cwd; "{day}" is the day its claim holds) whose last output line is a
+    # JSON answer on that day's run on whichever PC holds it (elsewhere.py), shown on the other PCs' pages. Without
+    # it, a task with `remind.record` is shown from its record and progress file.
+    elsewhere_cmd: list[str] | None = None
 
     @field_validator("claim_day")
     @classmethod
@@ -165,6 +169,9 @@ class TaskConfig(BaseModel):
 
     def resolved_preview_cmd(self) -> list[str] | None:
         return [_resolve(token) for token in self.preview_cmd] if self.preview_cmd else None
+
+    def resolved_elsewhere_cmd(self, day: str) -> list[str]:
+        return [_resolve(token.replace("{day}", day)) for token in self.elsewhere_cmd or []]
 
     def resolved_progress_file(self) -> Path | None:
         return (MARCO_DIR / self.progress_file).resolve() if self.progress_file else None

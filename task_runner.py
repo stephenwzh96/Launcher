@@ -26,6 +26,7 @@ from pathlib import Path
 
 import progress
 import reminder
+from elsewhere import Elsewhere
 from config import AUTO_SWITCH, TaskConfig, claim_day_rule
 from machine_sync import claims as day_claims
 from machine_sync import runlock as sync_lock
@@ -120,8 +121,10 @@ def _prune_on_github() -> None:
 
 class TaskRunner:
     def __init__(self, tasks: list[TaskConfig], log_dir: Path, stop_grace_s: float = STOP_GRACE_S,
-                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None, notify=_notify):
+                 claimer=_claim_on_github, sync_dir: Path = SYNC_DIR, pruner=None, notify=_notify, elsewhere=None):
         self.tasks = {t.id: t for t in tasks}
+        # the holder's run of each daily task, for this PC's page when another PC holds the day (elsewhere.py)
+        self.elsewhere = elsewhere or Elsewhere()
         self.notify = notify  # (text) -> None: what an automatic start did or could not do, for Stephen
         self.stop_grace_s = stop_grace_s
         self.claimer = claimer  # (task, day, machine, take_over, record=) -> ClaimResult
@@ -689,6 +692,7 @@ class TaskRunner:
     def status(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(UTC)
         out = []
+        machine = self._machine()
         with self.lock:
             for task_id, task in self.tasks.items():
                 self._settle(task_id)
@@ -709,7 +713,14 @@ class TaskRunner:
                     # and what it did on its last day
                     "auto": {"pc": task.auto.pc, "at": task.auto.at, "armed": self.auto_armed(task),
                              "last": self.auto.get(task_id)} if task.auto else None,
+                    # another PC holds today's day: its run of this task, which the page shows instead of this PC's
+                    # own history (Stephen, 23 Nov 2026; elsewhere.py)
+                    "elsewhere": None,
                 }
+                holder = self._holder_elsewhere(task, machine, now) if task.claim else None
+                if holder:
+                    today = now.astimezone(progress.zone(task.timezone)).date()
+                    item["elsewhere"] = self.elsewhere.view(task, self._day(task, now), today, holder, now)
                 if run:
                     text = _tail(self.log_dir / run["log"])
                     steps = PROGRESS.findall(text)
