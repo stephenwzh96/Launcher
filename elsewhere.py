@@ -10,7 +10,8 @@ Two sources, each a task's own:
   within about 5 minutes.
 - The IBKR cycle (tasks.yaml `elsewhere_cmd`): a read-only command (IBKR's `python -m src.operations day`) reads the
   trade day's cycle from the shared database. It takes a few seconds, so it runs in the background and is cached for
-  CMD_TTL_S; the page shows the last answer meanwhile.
+  CMD_TTL_S; the page shows the last answer meanwhile. Its `status` is the status of the cycle's current step, not of
+  the cycle: every step writes "done", and only `report` done is a finished night (week-48 review).
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ import reminder
 from config import TaskConfig
 
 STALE_MIN = 15  # a progress file not written for this long is no longer news of a live run (Machine sync: 5 min)
+STEP_STALE_MIN = 30  # a cycle between steps this long has stopped: a run moves on within minutes
 CMD_TTL_S = 60
 CMD_TIMEOUT_S = 45
 NO_WINDOW = 0x08000000  # Windows: no console flashes up for the background command
@@ -49,7 +51,11 @@ def from_record(task: TaskConfig, today: date, now: datetime, holder: str) -> di
         if verdict == "HOLD":
             return {"holder": holder, "state": "failed",
                     "text": f"HOLD on the {holder}{when}: no trade files today, IBKR keeps yesterday's positions"}
-        return {"holder": holder, "state": "done", "text": f"Done on the {holder}{when}: {verdict or 'finished'}"}
+        if verdict != "GO":  # FAILED (a step stopped the run), or a record without a verdict: never a green Done
+            envelope = "MTFA's envelope was written" if doc.get("envelope") else "no envelope"
+            return {"holder": holder, "state": "failed",
+                    "text": f"{verdict or 'Not finished'} on the {holder}{when}: {envelope}; see its log"}
+        return {"holder": holder, "state": "done", "text": f"Done on the {holder}{when}: GO"}
     p = progress.read(task.resolved_progress_file())
     if p and p.get("decision_date") == t and p.get("state") == "running":
         last = (progress.when(p.get("last_output_utc")) or progress.when(p.get("step_started_utc"))
@@ -65,24 +71,35 @@ def from_record(task: TaskConfig, today: date, now: datetime, holder: str) -> di
     return {"holder": holder, "state": "todo", "text": f"Not started on the {holder} yet"}
 
 
-def from_cycle(answer: dict, task: TaskConfig, holder: str) -> dict:
-    """The IBKR cycle on `holder`, from IBKR's `day` command: not started, waiting for approval, trading, done or
-    halted."""
+def from_cycle(answer: dict, task: TaskConfig, holder: str, now: datetime | None = None) -> dict:
+    """The IBKR cycle on `holder`, from IBKR's `day` command: not started, waiting for approval, approved and waiting
+    to start, trading, between steps, stopped, done or halted."""
     c = answer.get("cycle")
     if not c:
         return {"holder": holder, "state": "todo", "text": f"Not started on the {holder} yet"}
+    now = now or datetime.now(UTC)
     step, status = c.get("step") or "", c.get("status") or ""
     approved = progress.when(c.get("approved_at"))
+    updated = progress.when(c.get("updated_at"))
     by = f"; approved by {c.get('approved_by')} at {_hhmm(approved, task)}" if approved else ""
-    if status == "done":
-        return {"holder": holder, "state": "done",
-                "text": f"Done on the {holder} at {_hhmm(progress.when(c.get('updated_at')), task)}{by}"}
+    if status == "done" and step == "report":
+        return {"holder": holder, "state": "done", "text": f"Done on the {holder} at {_hhmm(updated, task)}{by}"}
+    if status == "done":  # a step done, the next not begun: moving on, or stopped there
+        idle = (now - updated).total_seconds() / 60 if updated else None
+        if idle is not None and idle > STEP_STALE_MIN:
+            return {"holder": holder, "state": "stalled",
+                    "text": f"Not finished on the {holder}: stopped after {step} at {_hhmm(updated, task)}; "
+                            f"check the {holder}"}
+        return {"holder": holder, "state": "running", "text": f"Running on the {holder}: {step} done{by}"}
     if status == "halted":
         why = str(c.get("halt") or "")[:160]
         return {"holder": holder, "state": "failed", "text": f"Halted on the {holder} at {step}: {why}"}
     if status == "waiting" and not approved:
         return {"holder": holder, "state": "running",
                 "text": f"Waiting for your approval on the {holder} (Telegram, or MTFA Operations)"}
+    if status == "waiting":  # approved, not yet started: the second press (or the resume task) starts it
+        return {"holder": holder, "state": "running",
+                "text": f"Approved at {_hhmm(approved, task)} on the {holder}, waiting for Start trading"}
     return {"holder": holder, "state": "running", "text": f"Running on the {holder}: {step}{by}"}
 
 
@@ -134,10 +151,21 @@ class Elsewhere:
             view = from_cycle(json.loads(lines[-1]), task, holder)
         except Exception as exc:  # noqa: BLE001 - the page says it could not tell; the next look tries again
             view = {"holder": holder, "state": "todo",
-                    "text": f"The {holder} holds today; its run could not be read here ({type(exc).__name__})"}
+                    "text": f"The {holder} holds today; its run could not be read here: {_why(exc, holder)}"}
         with self.lock:
             self.cache[key] = (time.monotonic(), view)
             self.busy.discard(key)
+
+
+def _why(exc: Exception, holder: str) -> str:
+    """What stopped the read, as a person can act on it: a timeout is the database not answering, a refusal names
+    its last line (a `db_mode` refusal, a missing env), anything else its type."""
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"the {holder}'s database did not answer in {CMD_TIMEOUT_S} s (the {holder} or Tailscale down?)"
+    if isinstance(exc, subprocess.CalledProcessError):
+        lines = [ln.strip() for ln in (exc.stderr or "").splitlines() if ln.strip()]
+        return f"the read failed: {lines[-1][:160]}" if lines else f"the read failed (exit {exc.returncode})"
+    return type(exc).__name__
 
 
 def _run(cmd: list[str], cwd: str) -> str:

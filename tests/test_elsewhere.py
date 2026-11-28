@@ -6,7 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -105,6 +105,29 @@ class ElsewhereCase(unittest.TestCase):
         self.assertEqual(halted, {"holder": "laptop", "state": "failed",
                                   "text": "Halted on the laptop at execute: gateway unreachable"})
 
+    def test_a_step_done_is_not_the_night_done(self) -> None:
+        """Week-48 review: every step writes "done"; only the report's is a finished night. A step done long ago is a
+        run that stopped there; an approved list not yet started says so; FAILED is never a green Done."""
+        task = self.cycle()
+        at = datetime(2026, 11, 23, 21, 10, tzinfo=UTC)  # 08:10 Sydney
+        moving = from_cycle(self.cycle_answer(step="execute", status="done", updated_at="2026-11-23T21:01:00+00:00",
+                                              approved_at="2026-11-23T04:02:22+00:00"), task, "vps", at)
+        self.assertEqual(moving["state"], "running")
+        self.assertIn("execute done", moving["text"])
+        stopped = from_cycle(self.cycle_answer(step="execute", status="done", updated_at="2026-11-23T20:01:00+00:00"),
+                             task, "vps", at)
+        self.assertEqual(stopped["state"], "stalled")
+        self.assertIn("stopped after execute at 07:01", stopped["text"])
+        ready = from_cycle(self.cycle_answer(step="approve", status="waiting",
+                                             approved_at="2026-11-23T04:02:22+00:00"), task, "vps", at)
+        self.assertIn("Approved at 15:02 on the vps, waiting for Start trading", ready["text"])
+
+    def test_a_failed_start_of_day_is_never_done(self) -> None:
+        self.record("FAILED")
+        view = from_record(self.sod(), MONDAY, NOW, "vps")
+        self.assertEqual(view["state"], "failed")
+        self.assertIn("FAILED on the vps", view["text"])
+
     def test_the_command_gets_the_day_and_its_answer_is_cached(self) -> None:
         calls = []
 
@@ -127,7 +150,7 @@ class ElsewhereCase(unittest.TestCase):
         ew = Elsewhere(run=run, ttl_s=0)
         view = ew.view(self.cycle(), "2026-11-23", MONDAY, "vps", wait=True)
         self.assertEqual(view["state"], "todo")
-        self.assertIn("could not be read here (TimeoutError)", view["text"])
+        self.assertIn("could not be read here: TimeoutError", view["text"])
 
     # ----- the page's status: the same on every PC -----
     def runner_on(self, machine: str, holder: str | None) -> TaskRunner:
