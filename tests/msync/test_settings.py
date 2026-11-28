@@ -28,3 +28,18 @@ class SyncthingFoldersTest(TempDirCase):
         cfg.parent.mkdir()
         cfg.write_text("<not xml")
         self.assertEqual(syncthing_folders(self.tmp, localappdata=None), ())
+
+
+class ReposTest(TempDirCase):
+    def test_trend_v1_is_its_own_repo_beside_trend(self) -> None:
+        """Stephen, 28 Nov 2026: Trend_v1 (a worktree of Trend on feat/macro-v1) synced on all three PCs. A path in
+        it belongs to Trend_v1, never to Trend, and Trend's paths stay Trend's."""
+        from machine_sync.data_sync import _repo_of
+        from machine_sync.settings import DEFAULT_REPOS, Settings
+
+        self.assertIn("Trend_v1", DEFAULT_REPOS)
+        self.assertEqual(len(DEFAULT_REPOS), len(set(DEFAULT_REPOS)))
+        cfg = Settings(home=self.tmp, machine="desktop")
+        self.assertEqual(_repo_of(cfg, "Trend_v1/AIJPMT1A_build/x.json"), "Trend_v1")
+        self.assertEqual(_repo_of(cfg, "Trend/AIJPMT1A_build/x.json"), "Trend")
+        self.assertIsNone(_repo_of(cfg, "Trend_v2/x.json"))

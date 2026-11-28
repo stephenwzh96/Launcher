@@ -13,6 +13,10 @@ FORGET_AFTER_DAYS = 30  # a PC whose note has been missing (or unreadable) this 
 DEFAULT_REPOS = (
     "Marco/Australia-Rates", "Marco/CB Pricer", "Marco/Curve", "Marco/FOMC", "Marco/launcher",
     "IBKR", "Trend", "FXMGT/JPMQFX01_build",
+    # a worktree of Trend on feat/macro-v1 (Stephen, 28 Nov 2026: "add this C:\Users\User\Trend_v1 to tailscale sync",
+    # "for all 3pcs"). It shares Trend's Git folder; each PC makes it once (git -C Trend worktree add ..\Trend_v1
+    # feat/macro-v1) and until then shows it as "not on this PC". No daily task uses it; its only ignored files are a cache
+    "Trend_v1",
 )
 LAUNCHER_REPO = "Marco/launcher"  # tasks.yaml and this tool: on the daily tasks' side of every rule
 DEFAULT_PLAIN_ROOTS = {"FXMGT": ["JPMQFX01_build"]}  # folders that are not repos: all data, minus these sub-folders
