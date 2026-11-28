@@ -1,6 +1,7 @@
 """What counts as data: Git-ignored, non-secret files under the repos, plus the plain (non-repo) folders. Same rules
 as the trip sync, plus: PostgreSQL data folders, SQLite side files, lock files, Syncthing conflict copies, and files
-still being written (`.staging` folders, `.tmp`/`.partial`/`.part` files and folders)."""
+still being written (`.staging` folders, `.tmp`/`.partial`/`.part` files and folders). JPMQS.txt (MarcoSynegy's DataQuery
+credentials) is a secret like `.env`: it stays on its PC."""
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +23,7 @@ SKIP_DIRS = {".git", ".venv", "venv", "env", "ENV", ".venv-ib", "node_modules", 
 TEMP_SUFFIX = (".tmp", ".partial", ".part")
 SKIP_FILE = re.compile(r"""(?ix)^(
     \.env(\..*)? | .*\.env | token\.json | credentials.*\.json | secrets?\.toml | .*\.(pem|key|pfx|p12)
+  | jpmqs\.txt
   | .*\.log | .*\.py[cod] | \.coverage | nul | thumbs\.db | \.ds_store | .*\.tsync-tmp | .*\.msync-tmp | ~syncthing~.*
   | .*\.lock | .*-wal | .*-shm | .*-journal | .*\.sync-conflict-.* | \.stignore | .*\.(tmp|partial|part)
 )$""")

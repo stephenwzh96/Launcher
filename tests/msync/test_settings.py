@@ -43,3 +43,22 @@ class ReposTest(TempDirCase):
         self.assertEqual(_repo_of(cfg, "Trend_v1/AIJPMT1A_build/x.json"), "Trend_v1")
         self.assertEqual(_repo_of(cfg, "Trend/AIJPMT1A_build/x.json"), "Trend")
         self.assertIsNone(_repo_of(cfg, "Trend_v2/x.json"))
+
+
+class MarcoSynegyTest(TempDirCase):
+    def test_marcosynegy_is_synced_without_its_venv_git_or_credentials(self) -> None:
+        """Stephen, 28 Nov 2026: the MarcoSynegy folder synced on all three PCs. Its data and notebooks go; its .venv,
+        the nested repos' .git folders and the DataQuery credentials file (JPMQS.txt) never leave the PC."""
+        from machine_sync.data_files import data_files
+        from machine_sync.settings import DEFAULT_PLAIN_ROOTS, Settings
+
+        self.assertEqual(DEFAULT_PLAIN_ROOTS["MarcoSynegy"], [])
+        root = self.tmp / "MarcoSynegy"
+        for rel in ("README.md", "JPMQS.txt", "data/jpmaqs/x.parquet", "notebooks/a.ipynb", ".venv/Lib/site.py",
+                    "shadow/.git/HEAD", "shadow/run_day.py"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("x")
+        cfg = Settings(home=self.tmp, machine="desktop", repos=())
+        found = set(data_files(cfg))
+        self.assertEqual(found, {f"MarcoSynegy/{r}" for r in ("README.md", "data/jpmaqs/x.parquet",
+                                                              "notebooks/a.ipynb", "shadow/run_day.py")})

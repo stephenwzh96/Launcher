@@ -19,7 +19,10 @@ DEFAULT_REPOS = (
     "Trend_v1",
 )
 LAUNCHER_REPO = "Marco/launcher"  # tasks.yaml and this tool: on the daily tasks' side of every rule
-DEFAULT_PLAIN_ROOTS = {"FXMGT": ["JPMQFX01_build"]}  # folders that are not repos: all data, minus these sub-folders
+# folders that are not repos: all data, minus these sub-folders. MarcoSynegy (Stephen, 28 Nov 2026: "also make sure the
+# marcosynergy folder also synced"): the Macrosynergy/JPMaQS library, cached data and the shadow legs, about 6 GB; its
+# .venv and nested .git folders stay on each PC, and its DataQuery credentials file never leaves it (data_files)
+DEFAULT_PLAIN_ROOTS = {"FXMGT": ["JPMQFX01_build"], "MarcoSynegy": []}
 OUTBOX_NAMES = {"laptop": "TripSync", "desktop": "DesktopSync", "vps": "VpsSync"}  # laptop: the trip sync's folder
 
 INTERVAL_MIN = 5
